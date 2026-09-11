@@ -18,8 +18,10 @@ import org.http4k.core.HttpHandler
 import org.http4k.core.Response
 import org.http4k.core.Status
 import org.http4k.format.Jackson
+import org.http4k.routing.ResourceLoader
 import org.http4k.routing.bind
 import org.http4k.routing.routes
+import org.http4k.routing.static
 import org.http4k.server.Undertow
 import org.http4k.server.asServer
 import java.time.Duration
@@ -68,7 +70,12 @@ fun main() {
             routes += adminCatalogRoutes.routes()
         }
     val docs = "/docs" bind swaggerUiLite { url = "/openapi.json" }
-    val routedApp = routes(app, docs)
+    val routedApp =
+        if (config.uiEnabled) {
+            routes(app, docs, static(ResourceLoader.Classpath("public")))
+        } else {
+            routes(app, docs)
+        }
     val appWithDocsRedirect: HttpHandler = { request ->
         if (request.uri.path == "/docs") {
             Response(Status.FOUND).header("Location", "/docs/")
@@ -79,6 +86,11 @@ fun main() {
 
     val server = appWithDocsRedirect.asServer(Undertow(config.port)).start()
     println("Knurl presentation-service listening on port ${config.port}")
+    if (config.uiEnabled) {
+        println("Gallery/Admin UI: http://localhost:${config.port}/")
+    } else {
+        println("Gallery/Admin UI: disabled (UI_ENABLED=false)")
+    }
     println("Swagger UI: http://localhost:${config.port}/docs")
 
     Runtime.getRuntime().addShutdownHook(

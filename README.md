@@ -48,6 +48,7 @@ Each service reads its config from a bundled `application.conf` (HOCON), which c
 | `S3_PRESIGNED_GET_TTL_SECONDS` | no | presentation | How long issued gallery media URLs (each `mediaItems[].smallUrl`/`largeUrl`/`videoUrl`) remain valid before S3 rejects them. Default `21600` (6h) — long enough for interactive gallery browsing; each media item also carries its own `mediaUrlExpiresAt` timestamp. |
 | `API_BEARER_TOKEN` | yes | presentation | Token required (as `Authorization: Bearer <token>`) on `POST /api/v1/gallery/track`. |
 | `PORT` | no | presentation | HTTP port. Default `8080`. |
+| `UI_ENABLED` | no | presentation | Set to `false` to disable the built-in gallery/admin UI served at `/` (the JSON API, `/docs`, and `/openapi.json` are unaffected). Default `true`. |
 | `INSTAGRAM_ACCESS_TOKEN` | yes | ingestion | Long-lived Instagram Graph API access token. |
 | `INSTAGRAM_BUSINESS_ACCOUNT_ID` | yes | ingestion | The Instagram Business Account ID whose media feed is polled. Public, non-secret - it's also the `{accountId}` path segment on presentation-service. |
 | `ADMIN_TOKEN` | yes | ingestion | Operator-chosen secret (not an Instagram credential) gating this account's admin catalog/selection API on presentation-service. Registered into the database on every `ingestion-service` startup - change and restart to rotate it. |
