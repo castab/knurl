@@ -1,0 +1,22 @@
+# VCS
+.git/
+.gitignore
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Build artifacts
+build/
+*/build/
+out/
+.gradle/
+.kotlin/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables (use .env.local or pass via secrets)
+.env

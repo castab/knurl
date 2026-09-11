@@ -1,0 +1,11 @@
+.gradle/
+.kotlin/
+build/
+*/build/
+out/
+.idea/
+*.iml
+local.properties
+
+# Local-only config overrides (real credentials - never commit)
+application-instagram.conf
