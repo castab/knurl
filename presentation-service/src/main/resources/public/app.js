@@ -53,13 +53,22 @@
     adminToken: "knurl.adminToken",
   };
 
+  // The account id is not a secret and is persisted across browser sessions for convenience. The two
+  // tokens are secrets and go to sessionStorage instead, so they do not survive the tab being closed.
+  // See REMEDIATION-PLAN.md P11.
+  const SECRET_FIELDS = new Set(["apiBearerToken", "adminToken"]);
+
   for (const [field, key] of Object.entries(CONFIG_KEYS)) {
-    const saved = localStorage.getItem(key);
+    const store = SECRET_FIELDS.has(field) ? sessionStorage : localStorage;
+    const saved = store.getItem(key);
     if (saved !== null) els[field].value = saved;
     els[field].addEventListener("input", () => {
-      localStorage.setItem(key, els[field].value);
+      store.setItem(key, els[field].value);
     });
   }
+
+  // One-time cleanup: remove secrets written to localStorage by an earlier build of this page.
+  for (const field of SECRET_FIELDS) localStorage.removeItem(CONFIG_KEYS[field]);
 
   function accountId() {
     return els.accountId.value.trim();
@@ -79,10 +88,17 @@
 
   // ---- shared helpers -------------------------------------------------
 
+  // Escapes for BOTH text and quoted-attribute contexts. The textContent/innerHTML round-trip used
+  // previously escaped only & < >, because HTML text-node serialization leaves quotes alone - which is
+  // unsafe here since every call site below interpolates into a double-quoted attribute.
+  // See REMEDIATION-PLAN.md P6.
   function escapeHtml(value) {
-    const div = document.createElement("div");
-    div.textContent = value ?? "";
-    return div.innerHTML;
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
   }
 
   function formatDate(iso) {
@@ -245,7 +261,7 @@
           <span class="badge">${escapeHtml(item.mediaType)}</span>
           <div class="card-caption">${escapeHtml(item.caption ?? "")}</div>
           <div class="card-meta">
-            <span>${formatDate(item.timestamp)}</span>
+            <span>${escapeHtml(formatDate(item.timestamp))}</span>
             <a href="${escapeHtml(item.permalink)}" target="_blank" rel="noopener">open</a>
           </div>
           <div class="card-meta">
@@ -427,7 +443,7 @@
             <a href="${escapeHtml(item.permalink)}" target="_blank" rel="noopener">open</a>
           </div>
           <div class="card-meta">
-            <span>${formatDate(item.timestamp)}</span>
+            <span>${escapeHtml(formatDate(item.timestamp))}</span>
           </div>
           <label class="select-row">
             <input type="checkbox" data-shortcode="${escapeHtml(item.shortcode)}" ${checked} ${disabled} />

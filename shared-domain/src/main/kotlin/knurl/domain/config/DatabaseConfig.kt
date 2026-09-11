@@ -17,6 +17,8 @@ import javax.sql.DataSource
  * memory budget.
  */
 object DatabaseConfig {
+    private const val DEFAULT_POSTGRES_PORT = 5432
+
     /**
      * Railway (and Heroku-style) DATABASE_URL values arrive as `postgres://user:pass@host:port/db`,
      * which HikariCP/the JDBC driver cannot consume directly - it requires a `jdbc:postgresql://` URL
@@ -29,11 +31,27 @@ object DatabaseConfig {
         }
 
         val uri = URI(raw)
+
+        // A URL whose password contains an unencoded reserved character (most often `@`) leaves
+        // URI.getHost() null rather than throwing. Without this guard that produced a silently broken
+        // "jdbc:postgresql://null:-1/db" with null credentials, surfacing much later as an opaque
+        // connection failure. Fail fast at config load instead - see REMEDIATION-PLAN.md P4.
+        val host =
+            uri.host
+                ?: throw IllegalArgumentException(
+                    "Could not parse a host out of the database URL. If the password contains a reserved " +
+                        "character such as '@', ':' or '/', it must be percent-encoded (e.g. '@' as '%40').",
+                )
+
+        // getUserInfo() already percent-decodes, and correctly preserves a literal '+'. Do not add
+        // URLDecoder here - it would turn '+' into a space and corrupt valid passwords.
         val userInfo = uri.userInfo?.split(":", limit = 2)
         val username = userInfo?.getOrNull(0)
         val password = userInfo?.getOrNull(1)
-        val query = uri.query?.let { "?$it" } ?: ""
-        val jdbcUrl = "jdbc:postgresql://${uri.host}:${uri.port}${uri.path}$query"
+        val port = if (uri.port == -1) DEFAULT_POSTGRES_PORT else uri.port
+        // rawQuery, not query: getQuery() is percent-decoded, which would corrupt an encoded '&' or '='.
+        val query = uri.rawQuery?.let { "?$it" } ?: ""
+        val jdbcUrl = "jdbc:postgresql://$host:$port${uri.rawPath}$query"
 
         return JdbcCredentials(jdbcUrl = jdbcUrl, username = username, password = password)
     }

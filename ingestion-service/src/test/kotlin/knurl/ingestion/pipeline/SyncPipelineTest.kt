@@ -201,4 +201,26 @@ class SyncPipelineTest :
 
             thumbnailSourceUrl(item) shouldBe null
         }
+
+        test("thumbnailSourceUrl: CAROUSEL_ALBUM whose first child is a VIDEO uses that child's thumbnail_url, not its mp4") {
+            val childList =
+                listOf(
+                    MediaChild(
+                        id = "child-1",
+                        mediaType = "VIDEO",
+                        mediaUrl = "https://cdn.example/first-child.mp4",
+                        thumbnailUrl = "https://cdn.example/first-child-thumb.jpg",
+                    ),
+                    MediaChild(id = "child-2", mediaType = "IMAGE", mediaUrl = "https://cdn.example/second-child.jpg"),
+                )
+            val item =
+                testItem(
+                    mediaType = "CAROUSEL_ALBUM",
+                    mediaUrl = "https://cdn.example/should-not-be-used.jpg",
+                    children = MediaChildren(data = childList),
+                    timestamp = instagramTimestamp(Instant.now()),
+                )
+
+            thumbnailSourceUrl(item) shouldBe "https://cdn.example/first-child-thumb.jpg"
+        }
     })

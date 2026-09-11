@@ -274,8 +274,12 @@ class InstagramPostRepository(
         }
 
     /**
-     * Eviction candidates are non-pinned posts outside BOTH the top [maxRecentCount] by recency
-     * AND the top [maxViewCount] by views - i.e. a post survives if it's in either top-N set.
+     * Eviction candidates are posts that are not pinned, **not currently admin-selected**, and outside
+     * BOTH the top [maxRecentCount] by recency AND the top [maxViewCount] by views - i.e. a post
+     * survives if it is pinned, selected, or in either top-N set. The `selected` exclusion is what
+     * stops eviction from deleting media that `SyncPipeline` would immediately re-download on the next
+     * cycle (an unbounded download/delete loop) - see REMEDIATION-PLAN.md P3. Ranking uses `id` as a
+     * tiebreaker so the window is stable across cycles when many posts share a view count.
      * Scoped to one account so retention is computed within that account's own pool, never
      * blended with another account's posts sharing this database. Media paths (for the S3 delete
      * that has to happen before the DB row itself is deleted) are fetched in one batched
@@ -292,11 +296,18 @@ class InstagramPostRepository(
                     .createQuery(
                         """
                         WITH ranked AS (
-                            SELECT id,
-                                   ROW_NUMBER() OVER (ORDER BY timestamp DESC)  AS recent_rank,
-                                   ROW_NUMBER() OVER (ORDER BY view_count DESC) AS view_rank
-                            FROM instagram_posts
-                            WHERE is_pinned = FALSE AND instagram_account_id = :accountId
+                            SELECT p.id,
+                                   ROW_NUMBER() OVER (ORDER BY p.timestamp DESC, p.id)  AS recent_rank,
+                                   ROW_NUMBER() OVER (ORDER BY p.view_count DESC, p.id) AS view_rank
+                            FROM instagram_posts p
+                            WHERE p.is_pinned = FALSE
+                              AND p.instagram_account_id = :accountId
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                  FROM instagram_media_catalog c
+                                  WHERE c.instagram_media_id = p.instagram_media_id
+                                    AND c.selected = TRUE
+                              )
                         )
                         SELECT id
                         FROM ranked

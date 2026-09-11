@@ -43,8 +43,13 @@ fun main() {
     val config =
         ConfigLoaderBuilder
             .default()
-            .addPropertySource(PropertySource.resource("/application-local.conf", optional = true))
+            // Order is priority order and the FIRST source added wins. `application.conf` must come
+            // first so that a deployed environment's real env vars (resolved into it by typesafe-config's
+            // ${?VAR} substitution) outrank the dev defaults below. When a ${?VAR} is unset the key is
+            // dropped from this source entirely, so local development still falls through to
+            // application-local.conf. Do not reorder these two lines - see REMEDIATION-PLAN.md P1.
             .addPropertySource(PropertySource.resource("/application.conf"))
+            .addPropertySource(PropertySource.resource("/application-local.conf", optional = true))
             .build()
             .loadConfigOrThrow<PresentationConfig>()
 

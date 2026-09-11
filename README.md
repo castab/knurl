@@ -6,7 +6,7 @@ Knurl is a low-memory Instagram media aggregation engine written in Kotlin. It's
 - **`ingestion-service`** — one process per Instagram account; a daemon (or cron-triggered, one-shot process) that catalogs the account's entire media feed, downloads/stores admin-selected posts, and runs a sliding-window retention eviction loop.
 - **`presentation-service`** — a multi-tenant read API (built on [http4k](https://www.http4k.org)) that serves any registered account's gallery as JSON with S3 presigned URLs, plus a Bearer-secured analytics tracking endpoint and a per-account-authenticated admin API for curating what gets synced.
 
-Both services are deployed under a strict **128MB heap** (`-Xmx128m`), so all file I/O and remote asset downloads are streamed rather than buffered — see [`AGENTS.md`](./AGENTS.md) for the exact rules if you're modifying this code.
+Both services are designed for a strict **128MB heap** (`-Xmx128m`), so all file I/O and remote asset downloads are streamed rather than buffered — see [`AGENTS.md`](./AGENTS.md) for the exact rules if you're modifying this code. The flag itself is not set by anything in this repo; set it on your deployment platform (e.g. `JAVA_TOOL_OPTIONS=-Xmx128m`).
 
 Neither service uses an application framework (no Spring Boot, Micronaut, Ratpack, DI container). Each is a plain `fun main()` that manually constructs and wires its own collaborators.
 
@@ -22,7 +22,7 @@ Neither service uses an application framework (no Spring Boot, Micronaut, Ratpac
 |---|---|
 | Language | Kotlin 2.4.20, JVM 25 |
 | HTTP server | http4k 6.58.0.0 (Undertow backend, `http4k-api-openapi` for OpenAPI docs + Swagger UI at `/docs`) |
-| HTTP client | OkHttp 4.12.0 (used uniformly by both services) |
+| HTTP client | OkHttp 4.12.0 (`ingestion-service` only — for the Graph API and CDN downloads. `presentation-service` makes no outbound HTTP calls: presigning is a purely local signing operation.) |
 | JSON | kotlinx.serialization for all route bodies; Jackson only backs the OpenAPI schema renderer (a documented http4k limitation - see `AGENTS.md`) |
 | Config | [Hoplite](https://github.com/sksamuel/hoplite) loading layered HOCON `.conf` files (`application.conf` merged with local dev overrides), with optional environment variable substitution via `${?VAR}` |
 | Database access | JDBI3 + HikariCP |
@@ -46,9 +46,9 @@ Each service reads its config from a bundled `application.conf` (HOCON), which c
 | `S3_ENDPOINT` | no | both | Endpoint override for non-AWS S3-compatible providers (e.g. Railway Buckets). |
 | `S3_PATH_STYLE_ACCESS` | no | both | Set `true` if your provider requires path-style bucket addressing. Default `false`. |
 | `S3_PRESIGNED_GET_TTL_SECONDS` | no | presentation | How long issued gallery media URLs (each `mediaItems[].smallUrl`/`largeUrl`/`videoUrl`) remain valid before S3 rejects them. Default `21600` (6h) — long enough for interactive gallery browsing; each media item also carries its own `mediaUrlExpiresAt` timestamp. |
-| `API_BEARER_TOKEN` | yes | presentation | Token required (as `Authorization: Bearer <token>`) on `POST /api/v1/gallery/track`. |
+| `API_BEARER_TOKEN` | yes | presentation | Token required (as `Authorization: Bearer <token>`) on `POST /api/v1/accounts/{accountId}/gallery/track`. |
 | `PORT` | no | presentation | HTTP port. Default `8080`. |
-| `UI_ENABLED` | no | presentation | Set to `false` to disable the built-in gallery/admin UI served at `/` (the JSON API, `/docs`, and `/openapi.json` are unaffected). Default `true`. |
+| `UI_ENABLED` | no | presentation | Set to `false` to disable the built-in gallery/admin UI served at `/` (the JSON API, `/docs`, and `/openapi.json` are unaffected). Default `true`. **The UI has no login of its own** — it is a thin client that asks the operator to paste tokens, holds them in `sessionStorage`, and sends them as Bearer headers. Set this to `false` on any deployment where the admin surface should not be publicly reachable. |
 | `INSTAGRAM_ACCESS_TOKEN` | yes | ingestion | Long-lived Instagram Graph API access token. |
 | `INSTAGRAM_BUSINESS_ACCOUNT_ID` | yes | ingestion | The Instagram Business Account ID whose media feed is polled. Public, non-secret - it's also the `{accountId}` path segment on presentation-service. |
 | `ADMIN_TOKEN` | yes | ingestion | Operator-chosen secret (not an Instagram credential) gating this account's admin catalog/selection API on presentation-service. Registered into the database on every `ingestion-service` startup - change and restart to rotate it. |
@@ -59,12 +59,16 @@ Each service reads its config from a bundled `application.conf` (HOCON), which c
 
 **Storage privacy:** `S3_BUCKET_NAME` must be provisioned as a *private* bucket — no public-read bucket policy, no anonymous `s3:GetObject` grant, and no public-access-block override that would allow unsigned requests to succeed. Neither service ever sets an object ACL on upload (`ingestion-service`'s `PutObjectRequest` calls set only `bucket`/`key`/`contentType`), so object visibility is entirely inherited from the bucket's own default (private) configuration. The only supported read path is a presigned GET minted by `presentation-service`; an unsigned request to the plain object URL must return `403`/access-denied. If your provider's default differs (or you're reusing a bucket that previously had public access enabled), disable public access explicitly in that provider's console/IaC before deploying.
 
+**Token exposure:** `API_BEARER_TOKEN` guards a browser-called endpoint (`POST .../gallery/track`), so any real browser client must ship it to the browser. Treat it as a rate-limiting speed bump against casual abuse, not as authentication — it is not a secret once a public gallery page uses it. A per-account `ADMIN_TOKEN` is a genuine secret: it is never embedded in a page, and the bundled UI keeps it only in `sessionStorage` for the life of the tab.
+
 Which posts get synced is admin-curated via an API, not an environment variable or config row — see "Curating what appears in the gallery" below. How many are retained is a **global** (not per-account) pair of runtime-configurable rows in the `sync_configurations` table, applied independently within each account's own post pool:
 
 - `max_recent_count` — how many non-pinned posts to always keep, ranked by recency (default 100 if unset).
 - `max_view_count` — how many non-pinned posts to always keep, ranked by view count (default 50 if unset).
 
-A post survives eviction if it's pinned (`is_pinned = true`), **or** in either top-N set above.
+A post survives eviction if it's pinned (`is_pinned = true`), **or** currently admin-selected, **or** in either top-N set above. Because `ingestion-service` only ever downloads admin-selected items, in normal operation the retention windows act as a dormant safety net: the posts they actually reap are ones that were later *deselected*. Eviction is deliberately forbidden from deleting a currently-selected post, because `SyncPipeline` would re-download it on the very next cycle.
+
+**`is_pinned` has no API or UI.** It is read by the eviction query but is never written by any code path in this repository; the only way to pin a post today is a manual `UPDATE instagram_posts SET is_pinned = TRUE WHERE id = '…'` against the database.
 
 ## Local development with Docker Compose
 
@@ -80,9 +84,9 @@ MinIO's web console is at http://localhost:9001 (login `knurl` / `knurl-dev-secr
 
 Both services load `application-local.conf` (shared dev config, tracked in git) on startup, which already matches the credentials above. For `ingestion-service`, you'll also need Instagram credentials:
 
-**Create `ingestion-service/src/main/resources/application-instagram.conf`** (gitignored):
+**Create `ingestion-service/config/application-instagram.conf`** (gitignored):
 ```hocon
-# ingestion-service/src/main/resources/application-instagram.conf (local only, do NOT commit)
+# ingestion-service/config/application-instagram.conf (local only, do NOT commit)
 instagram {
   accessToken = "your-long-lived-access-token"
   businessAccountId = "your-business-account-id"
@@ -126,7 +130,7 @@ The Graph API has no endpoint to resolve an arbitrary shortcode to a media id di
 
 ## API
 
-- `GET /api/v1/accounts/{accountId}/gallery?sort=recent|views&limit=12` — public. Each post carries a `mediaItems` array (one entry per downloaded image/video, in carousel display order — a single-image/video post still has exactly one entry) of presigned S3 GET URLs (valid for `S3_PRESIGNED_GET_TTL_SECONDS`, default 6h), each with `smallUrl`/`largeUrl`/`videoUrl`/`mediaUrlExpiresAt` so consumers know when to refetch. `CAROUSEL_ALBUM` posts can have multiple entries; other `mediaType`s always have exactly one.
+- `GET /api/v1/accounts/{accountId}/gallery?sort=recent|views&limit=12` — public. `limit` defaults to `12` and is silently clamped to the range `1..50`; `sort` must be `recent` or `views` (anything else returns `400`). Each post carries a `mediaItems` array (one entry per downloaded image/video, in carousel display order — a single-image/video post still has exactly one entry) of presigned S3 GET URLs (valid for `S3_PRESIGNED_GET_TTL_SECONDS`, default 6h), each with `smallUrl`/`largeUrl`/`videoUrl`/`mediaUrlExpiresAt` so consumers know when to refetch. `CAROUSEL_ALBUM` posts can have multiple entries; other `mediaType`s always have exactly one.
 - `POST /api/v1/accounts/{accountId}/gallery/track` — requires `Authorization: Bearer <API_BEARER_TOKEN>`. Body: `{ "id": "<post uuid>", "event": "view" | "click" }`.
 - `GET /api/v1/admin/accounts/{accountId}/catalog?selected=true|false` — requires `Authorization: Bearer <that account's ADMIN_TOKEN>`. Lists catalog entries, optionally filtered by selection state. `404` for an unregistered account, `401` for the wrong token.
 - `PATCH /api/v1/admin/accounts/{accountId}/catalog/selections` — same auth. Body: `{ "select": ["Cabc123XYZ"], "deselect": [] }`. Returns `{ "selected": [...], "deselected": [...], "notFound": [...] }` (a typo'd shortcode shows up in `notFound`, the rest of the request still applies).

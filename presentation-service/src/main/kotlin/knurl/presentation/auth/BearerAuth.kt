@@ -9,7 +9,7 @@ import java.security.MessageDigest
 
 /**
  * Shared bearer-token primitives. Extracted so both the single global [BearerAuth] filter (used
- * for POST /api/v1/gallery/track) and the per-account admin catalog routes - which must look up a
+ * for POST /api/v1/accounts/{accountId}/gallery/track) and the per-account admin catalog routes - which must look up a
  * *different* expected token per request, not one fixed at filter-construction time - can share
  * the same constant-time comparison without duplicating it.
  */
@@ -32,7 +32,7 @@ object BearerToken {
 
 /**
  * Guards state-modifying routes with a single, fixed expected token (currently just
- * POST /api/v1/gallery/track's global anti-abuse secret).
+ * POST /api/v1/accounts/{accountId}/gallery/track's global anti-abuse secret).
  */
 class BearerAuth(
     private val expectedToken: String,

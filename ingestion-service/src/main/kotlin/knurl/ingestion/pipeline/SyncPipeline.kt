@@ -41,7 +41,8 @@ private val SHORTCODE_PATTERN = Regex("""instagram\.com/(?:p|reel)/([A-Za-z0-9_-
  * colon, which `OffsetDateTime.parse(CharSequence)`'s default ISO_OFFSET_DATE_TIME formatter
  * rejects (it requires `+00:00` or `Z`).
  */
-private val INSTAGRAM_TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssZ")
+private val INSTAGRAM_TIMESTAMP_FORMATTER =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssZ", java.util.Locale.ROOT)
 
 fun extractShortcode(url: String): String? = SHORTCODE_PATTERN.find(url)?.groupValues?.get(1)
 
@@ -104,20 +105,27 @@ private const val EVICTION_CONCURRENCY = 2
 private const val THUMBNAIL_FETCH_CONCURRENCY = 4
 
 /**
- * Source URL for [item]'s cheap catalog-browse thumbnail, or null if none should be fetched
- * (yet). For VIDEO, Meta's own `thumbnail_url` is used directly once the item isn't (or isn't yet
- * known to be) permanently copyright-blocked - reusing [notDigestibleReason] rather than
- * reimplementing its "still processing vs. permanently omitted" distinction. For everything else
- * (IMAGE, CAROUSEL_ALBUM), the first child's `media_url` is used - reusing [resolveChildren] means
- * carousels aren't special-cased: it already returns a carousel's real first child, or a synthetic
- * single child for an ordinary image post. Pure/no I/O so it's unit-testable on its own.
+ * Source URL for [item]'s cheap catalog-browse thumbnail, or null if none should be fetched (yet).
+ * The decision is made on the *resolved first child*, never on the post's own `mediaType`:
+ * [resolveChildren] returns a carousel's real first child, or a synthetic single child standing in for
+ * an ordinary image/video post, so both shapes go through one code path. If that child is a video,
+ * Meta's own `thumbnail_url` for it is used once the item isn't (or isn't yet known to be) permanently
+ * copyright-blocked - reusing [notDigestibleReason] rather than reimplementing its "still processing vs.
+ * permanently omitted" distinction. Otherwise the child's `media_url` is the thumbnail source.
+ * Pure/no I/O so it's unit-testable on its own.
  */
-fun thumbnailSourceUrl(item: MediaItem): String? =
-    if (item.mediaType == "VIDEO") {
-        if (notDigestibleReason(item) == NOT_DIGESTIBLE_REASON_COPYRIGHT) null else item.thumbnailUrl
+fun thumbnailSourceUrl(item: MediaItem): String? {
+    // Branch on the resolved CHILD's media type, not the post's. A CAROUSEL_ALBUM whose first child is a
+    // video previously fell into the else-branch and returned that child's `media_url` - an .mp4 handed
+    // to the image decoder, which fails every cycle and re-downloads the whole video each time because
+    // `thumbnail_path` never gets set. See REMEDIATION-PLAN.md P5.
+    val child = resolveChildren(item).firstOrNull() ?: return null
+    return if (child.mediaType == "VIDEO") {
+        if (notDigestibleReason(item) == NOT_DIGESTIBLE_REASON_COPYRIGHT) null else child.thumbnailUrl
     } else {
-        resolveChildren(item).firstOrNull()?.mediaUrl
+        child.mediaUrl
     }
+}
 
 /**
  * Orchestrates one ingestion cycle: refresh the Graph API token if it's close to expiring, sync
@@ -234,6 +242,16 @@ class SyncPipeline(
             return
         }
 
+        // An unparseable timestamp previously propagated all the way out of runOnce and aborted the whole
+        // sync cycle, skipping every remaining item in the feed. Skip just this item instead.
+        // See REMEDIATION-PLAN.md P19.
+        val timestamp =
+            runCatching { OffsetDateTime.parse(item.timestamp, INSTAGRAM_TIMESTAMP_FORMATTER).toInstant() }
+                .getOrElse {
+                    log.warn("Unparseable timestamp '${item.timestamp}' for media ${item.id}; skipping this item", it)
+                    return
+                }
+
         catalogRepository.upsert(
             CatalogUpsert(
                 instagramMediaId = item.id,
@@ -242,7 +260,7 @@ class SyncPipeline(
                 mediaType = item.mediaType,
                 caption = item.caption,
                 permalink = item.permalink,
-                timestamp = OffsetDateTime.parse(item.timestamp, INSTAGRAM_TIMESTAMP_FORMATTER).toInstant(),
+                timestamp = timestamp,
                 notDigestibleReason = notDigestibleReason(item),
             ),
         )
@@ -356,6 +374,15 @@ class SyncPipeline(
 
     private fun evictOne(candidate: EvictionCandidate) {
         val objectIds = candidate.mediaPaths.map { ObjectIdentifier.builder().key(it).build() }
+
+        // A post with no media rows has nothing to delete from S3, and DeleteObjects rejects an empty
+        // object list outright (MalformedXML) - which previously aborted this candidate before the row
+        // delete and left it retrying forever. See REMEDIATION-PLAN.md P9.
+        if (objectIds.isEmpty()) {
+            log.warn("Eviction candidate ${candidate.id} has no media paths; deleting the row only")
+            postRepository.deleteById(candidate.id)
+            return
+        }
 
         val deleteResponse =
             s3Client.deleteObjects(

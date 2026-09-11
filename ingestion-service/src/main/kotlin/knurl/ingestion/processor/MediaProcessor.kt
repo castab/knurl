@@ -14,6 +14,17 @@ private const val SMALL_DIMENSION = 400
 private const val LARGE_DIMENSION = 800
 private const val WEBP_QUALITY = 80
 
+/**
+ * Hard ceiling on a source image download before it is decoded. Decoding produces an uncompressed
+ * raster roughly `width * height * 4` bytes, so an unbounded source is the most direct route to an OOM
+ * under the 128MB heap budget. Instagram's own CDN assets sit far below this.
+ * See REMEDIATION-PLAN.md P10.
+ */
+private const val MAX_SOURCE_IMAGE_BYTES = 32L * 1024 * 1024
+
+/** Content types this service will store verbatim on a video object; anything else falls back to `video/mp4`. */
+private val ALLOWED_VIDEO_CONTENT_TYPES = setOf("video/mp4", "video/quicktime", "video/webm")
+
 data class ImageVariantKeys(
     val smallKey: String,
     val largeKey: String,
@@ -33,18 +44,14 @@ class MediaProcessor(
         sourceUrl: String,
         keyPrefix: String,
     ): ImageVariantKeys {
-        val request = Request.Builder().url(sourceUrl).build()
-        okHttpClient.newCall(request).execute().use { response ->
-            val body = response.body ?: throw IOException("Empty image body for $sourceUrl")
-            val original = ImmutableImage.loader().fromStream(body.byteStream())
+        val original = downloadImage(sourceUrl)
 
-            val smallKey = "$keyPrefix/small.webp"
-            val largeKey = "$keyPrefix/large.webp"
-            uploadResizedWebp(original, SMALL_DIMENSION, smallKey)
-            uploadResizedWebp(original, LARGE_DIMENSION, largeKey)
+        val smallKey = "$keyPrefix/small.webp"
+        val largeKey = "$keyPrefix/large.webp"
+        uploadResizedWebp(original, SMALL_DIMENSION, smallKey)
+        uploadResizedWebp(original, LARGE_DIMENSION, largeKey)
 
-            return ImageVariantKeys(smallKey, largeKey)
-        }
+        return ImageVariantKeys(smallKey, largeKey)
     }
 
     fun processThumbnail(
@@ -62,11 +69,32 @@ class MediaProcessor(
         sourceUrl: String,
         key: String,
     ) {
+        uploadResizedWebp(downloadImage(sourceUrl), SMALL_DIMENSION, key)
+    }
+
+    /**
+     * Single download-and-decode path for both image entry points. Checks the HTTP status before
+     * decoding (a 4xx error body previously reached the decoder and surfaced as a misleading
+     * "unsupported format" error) and refuses a source larger than [MAX_SOURCE_IMAGE_BYTES], since the
+     * decoded raster is unbounded relative to the compressed download. See REMEDIATION-PLAN.md P10.
+     */
+    private fun downloadImage(sourceUrl: String): ImmutableImage {
         val request = Request.Builder().url(sourceUrl).build()
         okHttpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("Image download failed (${response.code}) for $sourceUrl")
+            }
             val body = response.body ?: throw IOException("Empty image body for $sourceUrl")
-            val original = ImmutableImage.loader().fromStream(body.byteStream())
-            uploadResizedWebp(original, SMALL_DIMENSION, key)
+
+            val declaredLength = body.contentLength()
+            if (declaredLength > MAX_SOURCE_IMAGE_BYTES) {
+                throw IOException(
+                    "Source image at $sourceUrl is $declaredLength bytes, over the " +
+                        "$MAX_SOURCE_IMAGE_BYTES byte decode limit",
+                )
+            }
+
+            return ImmutableImage.loader().fromStream(body.byteStream())
         }
     }
 
@@ -83,7 +111,11 @@ class MediaProcessor(
         val request = Request.Builder().url(sourceUrl).build()
         okHttpClient.newCall(request).execute().use { response ->
             val body = response.body ?: throw IOException("Empty video body for $sourceUrl")
-            val contentType = body.contentType()?.toString() ?: "video/mp4"
+            // Allowlisted, not taken verbatim: this value is stored on the S3 object and replayed by every
+            // presigned GET, so an unexpected upstream Content-Type would be served from the bucket origin
+            // as-is. Images are already pinned to image/webp. See REMEDIATION-PLAN.md P20.
+            val upstreamContentType = body.contentType()?.let { "${it.type}/${it.subtype}" }
+            val contentType = if (upstreamContentType in ALLOWED_VIDEO_CONTENT_TYPES) upstreamContentType!! else "video/mp4"
             val contentLength = body.contentLength()
 
             val putObjectRequest =

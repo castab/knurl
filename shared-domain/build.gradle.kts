@@ -13,5 +13,5 @@ dependencies {
     implementation("org.flywaydb:flyway-core:12.9.0")
     implementation("org.flywaydb:flyway-database-postgresql:12.9.0")
 
-    implementation("org.postgresql:postgresql:42.7.4")
+    implementation("org.postgresql:postgresql:42.7.7")
 }

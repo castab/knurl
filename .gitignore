@@ -7,5 +7,7 @@ out/
 *.iml
 local.properties
 
-# Local-only config overrides (real credentials - never commit)
+# Local-only config overrides (real credentials - never commit).
+# Kept OUTSIDE src/main/resources on purpose so it is never packaged into the jar/image.
 application-instagram.conf
+ingestion-service/config/

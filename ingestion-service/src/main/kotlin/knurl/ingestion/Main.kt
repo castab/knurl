@@ -22,6 +22,7 @@ import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.S3Configuration
+import java.io.File
 import java.net.URI
 import java.util.concurrent.TimeUnit
 
@@ -43,9 +44,17 @@ fun main() =
         val config =
             ConfigLoaderBuilder
                 .default()
-                .addPropertySource(PropertySource.resource("/application-instagram.conf", optional = true))
-                .addPropertySource(PropertySource.resource("/application-local.conf", optional = true))
+                // Order is priority order and the FIRST source added wins. `application.conf` must come
+                // first so that a deployed environment's real env vars (resolved into it by typesafe-config's
+                // ${?VAR} substitution) outrank the dev defaults below. When a ${?VAR} is unset the key is
+                // dropped from this source entirely, so local development still falls through to the two
+                // local files. Do not reorder these lines - see REMEDIATION-PLAN.md P1.
                 .addPropertySource(PropertySource.resource("/application.conf"))
+                // Loaded from disk, NOT the classpath: this file holds real Instagram credentials and must
+                // never be packaged into the jar/image. Resolved relative to the Gradle `run` task's working
+                // directory, which is `ingestion-service/`. See REMEDIATION-PLAN.md P2.
+                .addPropertySource(PropertySource.file(File("config/application-instagram.conf"), optional = true))
+                .addPropertySource(PropertySource.resource("/application-local.conf", optional = true))
                 .build()
                 .loadConfigOrThrow<IngestionConfig>()
 
