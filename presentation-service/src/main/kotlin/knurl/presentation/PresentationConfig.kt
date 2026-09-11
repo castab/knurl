@@ -9,4 +9,5 @@ data class PresentationConfig(
     val apiBearerToken: String,
     val port: Int = 8080,
     val presignedGetTtlSeconds: Long = 21600,
+    val uiEnabled: Boolean = true,
 )

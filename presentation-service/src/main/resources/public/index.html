@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Knurl</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Knurl</h1>
+    <div class="config-bar">
+      <label>
+        Account ID
+        <input type="text" id="accountId" placeholder="e.g. 17841400000000000" />
+      </label>
+      <label>
+        Public Bearer Token <span class="hint">(for tracking)</span>
+        <input type="text" id="apiBearerToken" placeholder="API_BEARER_TOKEN" />
+      </label>
+      <label>
+        Admin Token <span class="hint">(per-account)</span>
+        <input type="text" id="adminToken" placeholder="account admin token" />
+      </label>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button type="button" class="tab-button active" data-tab="gallery">Public Gallery</button>
+    <button type="button" class="tab-button" data-tab="admin">Admin Catalog</button>
+  </nav>
+
+  <main>
+    <section id="tab-gallery" class="tab-panel active">
+      <div class="controls">
+        <label>
+          Sort
+          <select id="gallerySort">
+            <option value="recent">Recent</option>
+            <option value="views">Most viewed</option>
+          </select>
+        </label>
+        <label>
+          Limit
+          <input type="number" id="galleryLimit" min="1" max="50" value="12" />
+        </label>
+        <button type="button" id="galleryLoad">Load Gallery</button>
+      </div>
+      <div id="galleryError" class="error-banner hidden"></div>
+      <div id="galleryStatus" class="status"></div>
+      <div id="galleryGrid" class="grid"></div>
+    </section>
+
+    <section id="tab-admin" class="tab-panel">
+      <div class="controls">
+        <div class="filter-group">
+          <span class="filter-group-label">Filters</span>
+          <label class="checkbox-label">
+            <input type="checkbox" id="filterSelected" />
+            Selected
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="filterPending" />
+            Pending
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="filterImage" />
+            Image
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="filterCarousel" />
+            Carousel
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="filterVideo" />
+            Video
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="catalogShowNotDigestible" checked />
+            Not-digestible
+          </label>
+        </div>
+        <button type="button" id="catalogLoad">Load Catalog</button>
+        <span id="pendingSummary" class="pending-count"></span>
+        <button type="button" id="catalogReset" disabled>Reset</button>
+        <button type="button" id="catalogCommit" disabled>Commit Selection</button>
+      </div>
+      <div id="catalogError" class="error-banner hidden"></div>
+      <div id="catalogStatus" class="status"></div>
+      <div id="catalogGrid" class="grid"></div>
+      <div id="catalogPagination" class="pagination hidden">
+        <button type="button" id="catalogPrev">&laquo; Prev</button>
+        <span id="catalogPageLabel"></span>
+        <button type="button" id="catalogNext">Next &raquo;</button>
+      </div>
+    </section>
+  </main>
+
+  <div id="lightbox" class="lightbox hidden">
+    <button type="button" id="lightboxClose" class="lightbox-close" aria-label="Close">&times;</button>
+    <button type="button" id="lightboxPrev" class="lightbox-nav lightbox-prev" aria-label="Previous">&lsaquo;</button>
+    <div class="lightbox-content">
+      <img id="lightboxImage" class="lightbox-media hidden" alt="" />
+      <video id="lightboxVideo" class="lightbox-media hidden" controls autoplay></video>
+      <div id="lightboxCounter" class="lightbox-counter"></div>
+      <div id="lightboxCaption" class="lightbox-caption"></div>
+    </div>
+    <button type="button" id="lightboxNext" class="lightbox-nav lightbox-next" aria-label="Next">&rsaquo;</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
