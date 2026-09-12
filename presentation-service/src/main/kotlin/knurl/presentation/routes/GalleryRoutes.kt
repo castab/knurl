@@ -44,8 +44,8 @@ data class GalleryItemResponse(
 
 @Serializable
 data class GalleryResponse(
-    val items: List<GalleryItemResponse>,
-    val count: Int,
+    val data: List<GalleryItemResponse>,
+    val pagination: PaginationMeta,
 )
 
 @Serializable
@@ -119,9 +119,13 @@ internal fun InstagramPost.toResponse(presigner: Presigner): GalleryItemResponse
 /**
  * Public, read-only gallery listing - one presentation-service deployment serves every ingested
  * account, so `accountId` (public, non-secret Graph API business account id) is a path segment
- * rather than something configured once at startup. `sort` and `limit` are validated manually
- * (rather than via a typed lens) so invalid values produce a clear 400 instead of a lens-failure
- * default.
+ * rather than something configured once at startup. `sort` is validated manually (rather than via a
+ * typed lens) so an invalid value produces a clear 400 instead of a lens-failure default.
+ *
+ * Results are paginated into the shared `{ data, pagination }` envelope (see [Pagination.kt]).
+ * `limit` and `page` are both silently clamped rather than rejected - `limit` into
+ * `1..MAX_PAGE_SIZE`, `page` into `1..totalPages` by [knurl.domain.models.Page.of] - so a client
+ * walking off either end of the range still gets a usable page and coherent links.
  */
 class GalleryRoutes(
     private val postRepository: InstagramPostRepository,
@@ -130,6 +134,7 @@ class GalleryRoutes(
     private val accountIdPath = Path.of("accountId")
     private val sortQuery = Query.string().defaulted("sort", "recent")
     private val limitQuery = Query.int().defaulted("limit", 12)
+    private val pageQuery = Query.int().defaulted("page", 1)
     private val galleryResponseLens = autoBody<GalleryResponse>().toLens()
     private val errorResponseLens = autoBody<ErrorResponse>().toLens()
     private val trackRequestLens = autoBody<TrackRequest>().toLens()
@@ -137,18 +142,30 @@ class GalleryRoutes(
 
     private fun listGallery(): ContractRoute =
         "/api/v1/accounts" / accountIdPath / "gallery" meta {
-            summary = "List gallery posts for an account, sorted by recency or view count"
+            summary = "List a page of gallery posts for an account, sorted by recency or view count"
             queries += sortQuery
             queries += limitQuery
-            returning(Status.OK, galleryResponseLens to GalleryResponse(listOf(EXAMPLE_GALLERY_ITEM), 1))
+            queries += pageQuery
+            returning(
+                Status.OK,
+                galleryResponseLens to
+                    GalleryResponse(
+                        listOf(EXAMPLE_GALLERY_ITEM),
+                        examplePagination("/api/v1/accounts/{accountId}/gallery"),
+                    ),
+            )
         } bindContract Method.GET to { accountId, _ ->
             { request ->
                 val sortResult = runCatching { SortOrder.fromQueryParam(sortQuery(request)) }
                 sortResult.fold(
                     onSuccess = { sort ->
-                        val limit = limitQuery(request).coerceIn(1, 50)
-                        val posts = postRepository.findAll(accountId, sort, limit)
-                        val body = GalleryResponse(items = posts.map { it.toResponse(presigner) }, count = posts.size)
+                        val pageSize = limitQuery(request).coerceIn(1, MAX_PAGE_SIZE)
+                        val page = postRepository.findPage(accountId, sort, pageSize, pageQuery(request))
+                        val body =
+                            GalleryResponse(
+                                data = page.items.map { it.toResponse(presigner) },
+                                pagination = paginationMeta(request, page),
+                            )
                         Response(Status.OK).with(galleryResponseLens of body)
                     },
                     onFailure = {

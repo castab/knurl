@@ -1,6 +1,7 @@
 package knurl.presentation.routes
 
 import knurl.domain.models.CatalogEntry
+import knurl.domain.models.CatalogFilter
 import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.CatalogRepository
 import knurl.presentation.auth.BearerToken
@@ -19,6 +20,7 @@ import org.http4k.core.with
 import org.http4k.format.KotlinxSerialization.autoBody
 import org.http4k.lens.Path
 import org.http4k.lens.Query
+import org.http4k.lens.int
 import org.http4k.lens.string
 import org.http4k.security.BearerAuthSecurity
 
@@ -43,8 +45,8 @@ data class AdminCatalogItemResponse(
 
 @Serializable
 data class AdminCatalogResponse(
-    val items: List<AdminCatalogItemResponse>,
-    val count: Int,
+    val data: List<AdminCatalogItemResponse>,
+    val pagination: PaginationMeta,
 )
 
 @Serializable
@@ -59,6 +61,13 @@ data class SelectionUpdateResponse(
     val deselected: List<String>,
     val notFound: List<String>,
 )
+
+/**
+ * The media types Instagram's Graph API reports, and therefore the only values the `mediaType`
+ * filter accepts. Validated up front so a typo narrows nothing silently - an unrecognised value
+ * would otherwise simply match no rows and look like an empty catalog.
+ */
+private val VALID_MEDIA_TYPES = setOf("IMAGE", "VIDEO", "CAROUSEL_ALBUM")
 
 /**
  * http4k's OpenAPI schema generator infers a JSON schema by reflecting on the runtime class of
@@ -114,6 +123,10 @@ class AdminCatalogRoutes(
     private val adminBearerSecurity = BearerAuthSecurity(Filter { next -> next }, "accountAdminBearer")
     private val accountIdPath = Path.of("accountId")
     private val selectedQuery = Query.string().optional("selected")
+    private val includeNotDigestibleQuery = Query.string().optional("includeNotDigestible")
+    private val mediaTypeQuery = Query.string().multi.optional("mediaType")
+    private val limitQuery = Query.int().defaulted("limit", MAX_PAGE_SIZE)
+    private val pageQuery = Query.int().defaulted("page", 1)
     private val catalogResponseLens = autoBody<AdminCatalogResponse>().toLens()
     private val errorResponseLens = autoBody<ErrorResponse>().toLens()
     private val selectionUpdateRequestLens = autoBody<SelectionUpdateRequest>().toLens()
@@ -139,29 +152,74 @@ class AdminCatalogRoutes(
         }
     }
 
-    // TODO: this returns the entire catalog with no limit, presigning one URL per
-    // row. Needs server-side limit/offset (clamped like GalleryRoutes' coerceIn(1, 50)) plus matching
-    // paging in public/app.js, which currently fetches everything and paginates client-side.
+    /**
+     * Filtering happens in SQL, before paging, so a filter describes the whole catalog rather than
+     * whichever page happened to load - the reason these are query parameters and not something the
+     * client applies to the rows it received.
+     *
+     * Every value is validated up front and an unrecognised one is a 400, matching how `selected`
+     * has always behaved. Throwing [IllegalArgumentException] rather than returning an error type
+     * mirrors `SortOrder.fromQueryParam`'s contract in [GalleryRoutes]; the caller turns it into
+     * the response body.
+     */
+    private fun catalogFilter(request: Request): CatalogFilter {
+        val selected =
+            when (selectedQuery(request)) {
+                null -> null
+                "true" -> true
+                "false" -> false
+                else -> throw IllegalArgumentException("invalid selected value")
+            }
+        val includeNotDigestible =
+            when (includeNotDigestibleQuery(request)) {
+                null, "true" -> true
+                "false" -> false
+                else -> throw IllegalArgumentException("invalid includeNotDigestible value")
+            }
+        val mediaTypes = mediaTypeQuery(request).orEmpty().toSet()
+        val unknown = mediaTypes - VALID_MEDIA_TYPES
+        require(unknown.isEmpty()) { "invalid mediaType value: ${unknown.sorted().joinToString()}" }
+
+        return CatalogFilter(selected = selected, mediaTypes = mediaTypes, includeNotDigestible = includeNotDigestible)
+    }
+
     private fun listCatalog(): ContractRoute =
         "/api/v1/admin/accounts" / accountIdPath / "catalog" meta {
-            summary = "List catalog entries for an account, optionally filtered by selection state"
+            summary = "List a page of catalog entries for an account, optionally filtered"
             security = adminBearerSecurity
             queries += selectedQuery
-            returning(Status.OK, catalogResponseLens to AdminCatalogResponse(listOf(EXAMPLE_CATALOG_ITEM), 1))
+            queries += includeNotDigestibleQuery
+            queries += mediaTypeQuery
+            queries += limitQuery
+            queries += pageQuery
+            returning(
+                Status.OK,
+                catalogResponseLens to
+                    AdminCatalogResponse(
+                        listOf(EXAMPLE_CATALOG_ITEM),
+                        examplePagination("/api/v1/admin/accounts/{accountId}/catalog"),
+                    ),
+            )
         } bindContract Method.GET to { accountId, _ ->
             { request ->
                 authorize(accountId, request) {
-                    when (val raw = selectedQuery(request)) {
-                        null, "true", "false" -> {
-                            val entries = catalogRepository.findAll(accountId, raw?.toBoolean())
-                            Response(Status.OK)
-                                .with(catalogResponseLens of AdminCatalogResponse(entries.map { it.toResponse(presigner) }, entries.size))
-                        }
-
-                        else -> {
-                            Response(Status.BAD_REQUEST).with(errorResponseLens of ErrorResponse("invalid selected value"))
-                        }
-                    }
+                    runCatching { catalogFilter(request) }.fold(
+                        onSuccess = { filter ->
+                            val pageSize = limitQuery(request).coerceIn(1, MAX_PAGE_SIZE)
+                            val page = catalogRepository.findPage(accountId, filter, pageSize, pageQuery(request))
+                            Response(Status.OK).with(
+                                catalogResponseLens of
+                                    AdminCatalogResponse(
+                                        data = page.items.map { it.toResponse(presigner) },
+                                        pagination = paginationMeta(request, page),
+                                    ),
+                            )
+                        },
+                        onFailure = {
+                            Response(Status.BAD_REQUEST)
+                                .with(errorResponseLens of ErrorResponse(it.message ?: "invalid filter"))
+                        },
+                    )
                 }
             }
         }

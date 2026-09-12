@@ -2,16 +2,19 @@ package knurl.domain.repositories
 
 import knurl.domain.models.AuthConfig
 import knurl.domain.models.CatalogEntry
+import knurl.domain.models.CatalogFilter
 import knurl.domain.models.CatalogSelectionResult
 import knurl.domain.models.CatalogUpsert
 import knurl.domain.models.EvictionCandidate
 import knurl.domain.models.InstagramPost
 import knurl.domain.models.InstagramPostUpsert
+import knurl.domain.models.Page
 import knurl.domain.models.PostMediaItem
 import knurl.domain.models.SortOrder
 import org.jdbi.v3.core.Jdbi
 import org.jdbi.v3.core.kotlin.bindKotlin
 import org.jdbi.v3.core.kotlin.mapTo
+import org.jdbi.v3.core.statement.Query
 import java.time.Instant
 import kotlin.uuid.Uuid
 
@@ -151,42 +154,71 @@ class InstagramPostRepository(
         }
 
     /**
+     * One page of an account's posts, plus the total number of posts it has, for offset pagination.
+     *
      * Sort column is selected via a fixed enum->literal mapping, never interpolated from
-     * unvalidated client input, to avoid SQL injection through the `sort` query parameter.
+     * unvalidated client input, to avoid SQL injection through the `sort` query parameter. Both
+     * orderings carry `id` as a tiebreaker: `timestamp`/`view_count` alone are not unique, and
+     * without a total order Postgres is free to return a tied row on two different pages (or on
+     * neither) - the same reasoning that already applies to [findEvictionCandidates].
+     *
+     * The `COUNT(*)` and the row query share one handle (one pooled connection, not two). They are
+     * not wrapped in a transaction: a concurrent ingestion cycle could in principle land a post
+     * between them, which at worst shifts one row across a page boundary. That is not worth
+     * holding a transaction open for on a read-only endpoint.
+     *
      * Media items are fetched in one batched follow-up query (not per-post) to avoid N+1.
      */
-    fun findAll(
+    fun findPage(
         accountId: String,
         sort: SortOrder,
-        limit: Int,
-    ): List<InstagramPost> {
+        pageSize: Int,
+        page: Int,
+    ): Page<InstagramPost> {
         val orderByClause =
             when (sort) {
-                SortOrder.RECENT -> "timestamp DESC"
-                SortOrder.VIEWS -> "view_count DESC"
+                SortOrder.RECENT -> "timestamp DESC, id"
+                SortOrder.VIEWS -> "view_count DESC, id"
             }
 
-        return jdbi.withHandle<List<InstagramPost>, Exception> { handle ->
-            val posts =
+        return jdbi.withHandle<Page<InstagramPost>, Exception> { handle ->
+            val totalRecords =
                 handle
-                    .createQuery(
-                        "SELECT * FROM instagram_posts WHERE instagram_account_id = :accountId ORDER BY $orderByClause LIMIT :limit",
-                    ).bind("accountId", accountId)
-                    .bind("limit", limit)
-                    .mapTo<InstagramPostRow>()
-                    .list()
+                    .createQuery("SELECT COUNT(*) FROM instagram_posts WHERE instagram_account_id = :accountId")
+                    .bind("accountId", accountId)
+                    .mapTo<Int>()
+                    .one()
 
-            if (posts.isEmpty()) return@withHandle emptyList()
+            Page.of(totalRecords, pageSize, page) { offset ->
+                val posts =
+                    handle
+                        .createQuery(
+                            """
+                            SELECT * FROM instagram_posts
+                            WHERE instagram_account_id = :accountId
+                            ORDER BY $orderByClause
+                            LIMIT :limit OFFSET :offset
+                            """.trimIndent(),
+                        ).bind("accountId", accountId)
+                        .bind("limit", pageSize)
+                        .bind("offset", offset)
+                        .mapTo<InstagramPostRow>()
+                        .list()
 
-            val mediaByPost =
-                handle
-                    .createQuery("SELECT * FROM instagram_post_media WHERE post_id IN (<ids>) ORDER BY position")
-                    .bindList("ids", posts.map { it.id })
-                    .mapTo<PostMediaItem>()
-                    .list()
-                    .groupBy { it.postId }
+                if (posts.isEmpty()) {
+                    emptyList()
+                } else {
+                    val mediaByPost =
+                        handle
+                            .createQuery("SELECT * FROM instagram_post_media WHERE post_id IN (<ids>) ORDER BY position")
+                            .bindList("ids", posts.map { it.id })
+                            .mapTo<PostMediaItem>()
+                            .list()
+                            .groupBy { it.postId }
 
-            posts.map { it.toDomain(mediaByPost[it.id].orEmpty()) }
+                    posts.map { it.toDomain(mediaByPost[it.id].orEmpty()) }
+                }
+            }
         }
     }
 
@@ -392,6 +424,32 @@ class SyncConfigurationRepository(
         }
 }
 
+/**
+ * The `AND ...` fragment appending [filter] to a catalog query's account-scoped WHERE clause, or
+ * `""` for an unrestricted filter. Paired with [bindCatalogFilter], which supplies the parameters
+ * this fragment references; every query using one must use the other.
+ *
+ * Nothing here interpolates a client-supplied value. The `selected` and `not_digestible_reason`
+ * clauses are fixed literals chosen by a type-safe `when`, and media types appear only as a JDBI
+ * `<mediaTypes>` list-binding placeholder expanded into real bind parameters. An empty
+ * [CatalogFilter.mediaTypes] omits that clause entirely - it means "no restriction", and JDBI
+ * rejects an empty `bindList` regardless.
+ */
+private fun catalogFilterClause(filter: CatalogFilter): String =
+    buildString {
+        when (filter.selected) {
+            null -> Unit
+            true -> append(" AND selected = TRUE")
+            false -> append(" AND selected = FALSE")
+        }
+        if (!filter.includeNotDigestible) append(" AND not_digestible_reason IS NULL")
+        if (filter.mediaTypes.isNotEmpty()) append(" AND media_type IN (<mediaTypes>)")
+    }
+
+/** Binds the parameters referenced by [catalogFilterClause]; see there for why only media types need binding. */
+private fun Query.bindCatalogFilter(filter: CatalogFilter): Query =
+    if (filter.mediaTypes.isEmpty()) this else bindList("mediaTypes", filter.mediaTypes.sorted())
+
 class CatalogRepository(
     private val jdbi: Jdbi,
 ) {
@@ -470,32 +528,55 @@ class CatalogRepository(
     }
 
     /**
-     * `selected = null` returns every catalog entry for the account; a fixed literal WHERE clause
-     * is picked via a type-safe `when` (never interpolated from unvalidated client input), same
-     * pattern as [InstagramPostRepository.findAll]'s `orderByClause`.
+     * One page of an account's catalog, plus the total matching [filter], for offset pagination.
+     *
+     * The WHERE clause is assembled by [catalogFilterClause] and bound by [bindCatalogFilter],
+     * which the `COUNT(*)` and the row query both go through - so the total can never describe a
+     * different set of rows than the page it accompanies. Neither helper interpolates client input:
+     * the `selected`/`not_digestible_reason` clauses are fixed literals chosen by a type-safe
+     * `when` (same pattern as [InstagramPostRepository.findPage]'s `orderByClause`) and media types
+     * go through JDBI's `bindList`, i.e. real bind parameters.
+     *
+     * `ORDER BY` carries `instagram_media_id` (the primary key) as a tiebreaker because `timestamp`
+     * alone is not unique and offset paging needs a total order - see [InstagramPostRepository.findPage].
      */
-    fun findAll(
+    fun findPage(
         accountId: String,
-        selected: Boolean?,
-    ): List<CatalogEntry> {
-        val selectedClause =
-            when (selected) {
-                null -> ""
-                true -> "AND selected = TRUE"
-                false -> "AND selected = FALSE"
-            }
+        filter: CatalogFilter,
+        pageSize: Int,
+        page: Int,
+    ): Page<CatalogEntry> {
+        val filterClause = catalogFilterClause(filter)
 
-        return jdbi.withHandle<List<CatalogEntry>, Exception> { handle ->
-            handle
-                .createQuery(
-                    """
-                    SELECT * FROM instagram_media_catalog
-                    WHERE instagram_account_id = :accountId $selectedClause
-                    ORDER BY timestamp DESC
-                    """.trimIndent(),
-                ).bind("accountId", accountId)
-                .mapTo<CatalogEntry>()
-                .list()
+        return jdbi.withHandle<Page<CatalogEntry>, Exception> { handle ->
+            val totalRecords =
+                handle
+                    .createQuery(
+                        """
+                        SELECT COUNT(*) FROM instagram_media_catalog
+                        WHERE instagram_account_id = :accountId $filterClause
+                        """.trimIndent(),
+                    ).bind("accountId", accountId)
+                    .bindCatalogFilter(filter)
+                    .mapTo<Int>()
+                    .one()
+
+            Page.of(totalRecords, pageSize, page) { offset ->
+                handle
+                    .createQuery(
+                        """
+                        SELECT * FROM instagram_media_catalog
+                        WHERE instagram_account_id = :accountId $filterClause
+                        ORDER BY timestamp DESC, instagram_media_id
+                        LIMIT :limit OFFSET :offset
+                        """.trimIndent(),
+                    ).bind("accountId", accountId)
+                    .bind("limit", pageSize)
+                    .bind("offset", offset)
+                    .bindCatalogFilter(filter)
+                    .mapTo<CatalogEntry>()
+                    .list()
+            }
         }
     }
 

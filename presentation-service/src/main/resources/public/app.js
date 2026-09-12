@@ -1,8 +1,6 @@
 (() => {
   "use strict";
 
-  const PAGE_SIZE = 48;
-
   const els = {
     accountId: document.getElementById("accountId"),
     apiBearerToken: document.getElementById("apiBearerToken"),
@@ -16,6 +14,10 @@
     galleryError: document.getElementById("galleryError"),
     galleryStatus: document.getElementById("galleryStatus"),
     galleryGrid: document.getElementById("galleryGrid"),
+    galleryPagination: document.getElementById("galleryPagination"),
+    galleryPrev: document.getElementById("galleryPrev"),
+    galleryNext: document.getElementById("galleryNext"),
+    galleryPageLabel: document.getElementById("galleryPageLabel"),
 
     filterSelected: document.getElementById("filterSelected"),
     filterPending: document.getElementById("filterPending"),
@@ -134,6 +136,19 @@
     el.classList.toggle("hidden", !message);
   }
 
+  // Both list endpoints return { data, pagination: { totalRecords, currentPage, totalPages, links } }.
+  // Navigation follows pagination.links verbatim rather than rebuilding a URL here: the links are
+  // relative and already carry the sort/filter parameters, so the client never has to keep its own
+  // idea of the query in sync with the server's.
+  function renderPagination(els_, pagination) {
+    const { currentPage, totalPages, links } = pagination;
+    els_.pagination.classList.toggle("hidden", totalPages <= 1);
+    els_.pageLabel.textContent = `Page ${currentPage} of ${totalPages}`;
+    els_.prev.disabled = !links.prev;
+    els_.next.disabled = !links.next;
+    return links;
+  }
+
   // ---- Lightbox (full image / video view) -------------------------------
 
   let lightboxMediaItems = [];
@@ -196,7 +211,20 @@
 
   // ---- Public Gallery tab ----------------------------------------------
 
-  async function loadGallery() {
+  // Links from the most recent gallery response, so Prev/Next can follow them directly.
+  let galleryLinks = { prev: null, next: null };
+
+  function galleryFirstPageUrl() {
+    const sort = els.gallerySort.value;
+    const limit = els.galleryLimit.value;
+    return (
+      `/api/v1/accounts/${encodeURIComponent(accountId())}/gallery` +
+      `?sort=${encodeURIComponent(sort)}&limit=${encodeURIComponent(limit)}&page=1`
+    );
+  }
+
+  // `url` is a pagination link when paging, and undefined when loading fresh from the controls.
+  async function loadGallery(url) {
     showError(els.galleryError, "");
     if (!accountId()) {
       showError(els.galleryError, "Enter an Account ID first.");
@@ -206,16 +234,22 @@
     els.galleryStatus.textContent = "Loading...";
     els.galleryGrid.innerHTML = "";
     try {
-      const sort = els.gallerySort.value;
-      const limit = els.galleryLimit.value;
-      const data = await apiFetch(
-        `/api/v1/accounts/${encodeURIComponent(accountId())}/gallery?sort=${encodeURIComponent(sort)}&limit=${encodeURIComponent(limit)}`,
+      const body = await apiFetch(url ?? galleryFirstPageUrl());
+      renderGallery(body.data);
+      galleryLinks = renderPagination(
+        {
+          pagination: els.galleryPagination,
+          pageLabel: els.galleryPageLabel,
+          prev: els.galleryPrev,
+          next: els.galleryNext,
+        },
+        body.pagination,
       );
-      renderGallery(data.items);
-      els.galleryStatus.textContent = `${data.count} item(s)`;
+      els.galleryStatus.textContent = `${body.pagination.totalRecords} item(s)`;
     } catch (err) {
       showError(els.galleryError, err.message);
       els.galleryStatus.textContent = "";
+      els.galleryPagination.classList.add("hidden");
     } finally {
       els.galleryLoad.disabled = false;
     }
@@ -302,20 +336,46 @@
     }
   }
 
-  els.galleryLoad.addEventListener("click", loadGallery);
+  els.galleryLoad.addEventListener("click", () => loadGallery());
+  els.galleryPrev.addEventListener("click", () => galleryLinks.prev && loadGallery(galleryLinks.prev));
+  els.galleryNext.addEventListener("click", () => galleryLinks.next && loadGallery(galleryLinks.next));
 
   // ---- Admin Catalog tab -------------------------------------------------
 
-  let catalogItems = [];
-  let baseline = new Map(); // shortcode -> selected boolean, as of last GET/commit
+  let catalogItems = []; // the current page only; the rest of the catalog lives on the server
+  // baseline/pending are keyed by shortcode and accumulate across every page visited since the
+  // last commit, so a toggle made on page 1 survives a trip to page 2 and one Commit still sends
+  // every unsaved change in a single PATCH.
+  let baseline = new Map(); // shortcode -> selected, as the server last reported it
   let pending = new Map(); // shortcode -> current checkbox state
-  let currentPage = 0;
+  let catalogLinks = { prev: null, next: null };
+  let catalogSelfLink = null; // the page to return to after committing
+
+  const MEDIA_TYPE_FILTERS = [
+    ["filterImage", "IMAGE"],
+    ["filterCarousel", "CAROUSEL_ALBUM"],
+    ["filterVideo", "VIDEO"],
+  ];
 
   function adminToken() {
     return els.adminToken.value.trim();
   }
 
-  async function loadCatalog() {
+  // Everything except the Pending filter is applied server-side, so a filter narrows the whole
+  // catalog rather than just the rows that happen to be loaded.
+  function catalogFirstPageUrl() {
+    const params = new URLSearchParams();
+    if (els.filterSelected.checked) params.set("selected", "true");
+    for (const [field, type] of MEDIA_TYPE_FILTERS) {
+      if (els[field].checked) params.append("mediaType", type);
+    }
+    if (!els.catalogShowNotDigestible.checked) params.set("includeNotDigestible", "false");
+    params.set("page", "1");
+    return `/api/v1/admin/accounts/${encodeURIComponent(accountId())}/catalog?${params}`;
+  }
+
+  // `url` is a pagination link when paging, and undefined to (re)load page 1 from the filters.
+  async function loadCatalog(url) {
     showError(els.catalogError, "");
     if (!accountId()) {
       showError(els.catalogError, "Enter an Account ID first.");
@@ -329,60 +389,50 @@
     els.catalogStatus.textContent = "Loading...";
     els.catalogGrid.innerHTML = "";
     try {
-      const data = await apiFetch(
-        `/api/v1/admin/accounts/${encodeURIComponent(accountId())}/catalog`,
-        { token: adminToken() },
+      const body = await apiFetch(url ?? catalogFirstPageUrl(), { token: adminToken() });
+      catalogItems = body.data;
+      for (const item of catalogItems) {
+        baseline.set(item.shortcode, item.selected);
+        // Merge rather than overwrite: an unsaved toggle for this shortcode outranks what the
+        // server just said, or paging away and back would silently discard it.
+        if (!pending.has(item.shortcode)) pending.set(item.shortcode, item.selected);
+      }
+      catalogSelfLink = body.pagination.links.self;
+      catalogLinks = renderPagination(
+        {
+          pagination: els.catalogPagination,
+          pageLabel: els.catalogPageLabel,
+          prev: els.catalogPrev,
+          next: els.catalogNext,
+        },
+        body.pagination,
       );
-      catalogItems = data.items;
-      baseline = new Map(catalogItems.map((item) => [item.shortcode, item.selected]));
-      pending = new Map(baseline);
-      currentPage = 0;
-      els.catalogStatus.textContent = `${data.count} item(s)`;
+      els.catalogStatus.textContent = `${body.pagination.totalRecords} item(s)`;
       renderCatalogPage();
     } catch (err) {
       showError(els.catalogError, err.message);
       els.catalogStatus.textContent = "";
+      els.catalogPagination.classList.add("hidden");
     } finally {
       els.catalogLoad.disabled = false;
     }
   }
 
-  const MEDIA_TYPE_FILTERS = [
-    ["filterImage", "IMAGE"],
-    ["filterCarousel", "CAROUSEL_ALBUM"],
-    ["filterVideo", "VIDEO"],
-  ];
-
+  // The only filter left on the client: "pending" means unsaved browser state, which the server
+  // has no way to know about. It therefore narrows the current page rather than the whole catalog.
   function visibleCatalogItems() {
-    const activeTypes = MEDIA_TYPE_FILTERS.filter(([field]) => els[field].checked).map(
-      ([, type]) => type,
-    );
-    return catalogItems.filter((item) => {
-      if (!els.catalogShowNotDigestible.checked && item.notDigestibleReason) return false;
-      if (els.filterSelected.checked && !item.selected) return false;
-      if (els.filterPending.checked && pending.get(item.shortcode) === baseline.get(item.shortcode)) {
-        return false;
-      }
-      if (activeTypes.length && !activeTypes.includes(item.mediaType)) return false;
-      return true;
-    });
-  }
-
-  function totalPages() {
-    return Math.max(1, Math.ceil(visibleCatalogItems().length / PAGE_SIZE));
+    if (!els.filterPending.checked) return catalogItems;
+    return catalogItems.filter((item) => pending.get(item.shortcode) !== baseline.get(item.shortcode));
   }
 
   function renderCatalogPage() {
     const items = visibleCatalogItems();
     if (!items.length) {
       els.catalogGrid.innerHTML = '<p class="status">No items found.</p>';
-      els.catalogPagination.classList.add("hidden");
       updatePendingSummary();
       return;
     }
-    const start = currentPage * PAGE_SIZE;
-    const pageItems = items.slice(start, start + PAGE_SIZE);
-    els.catalogGrid.innerHTML = pageItems.map(catalogCardHtml).join("");
+    els.catalogGrid.innerHTML = items.map(catalogCardHtml).join("");
     els.catalogGrid.querySelectorAll("[data-shortcode]").forEach((checkbox) => {
       checkbox.addEventListener("change", () => {
         pending.set(checkbox.dataset.shortcode, checkbox.checked);
@@ -396,10 +446,6 @@
       });
     });
 
-    els.catalogPagination.classList.toggle("hidden", totalPages() <= 1);
-    els.catalogPageLabel.textContent = `Page ${currentPage + 1} of ${totalPages()}`;
-    els.catalogPrev.disabled = currentPage === 0;
-    els.catalogNext.disabled = currentPage >= totalPages() - 1;
     updatePendingSummary();
   }
 
@@ -472,34 +518,28 @@
     els.catalogReset.disabled = total === 0;
   }
 
+  // These four are server-side filters, so changing one has to refetch from page 1 - the rows that
+  // match may live anywhere in the catalog, not just in the page currently loaded.
   [
     els.filterSelected,
-    els.filterPending,
     els.filterImage,
     els.filterCarousel,
     els.filterVideo,
     els.catalogShowNotDigestible,
   ].forEach((checkbox) => {
-    checkbox.addEventListener("change", () => {
-      currentPage = 0;
-      renderCatalogPage();
-    });
+    checkbox.addEventListener("change", () => loadCatalog());
   });
+
+  // Pending is client-side state, so it only re-renders what is already loaded.
+  els.filterPending.addEventListener("change", renderCatalogPage);
 
   els.catalogReset.addEventListener("click", () => {
     pending = new Map(baseline);
     renderCatalogPage();
   });
 
-  els.catalogPrev.addEventListener("click", () => {
-    currentPage = Math.max(0, currentPage - 1);
-    renderCatalogPage();
-  });
-
-  els.catalogNext.addEventListener("click", () => {
-    currentPage = Math.min(totalPages() - 1, currentPage + 1);
-    renderCatalogPage();
-  });
+  els.catalogPrev.addEventListener("click", () => catalogLinks.prev && loadCatalog(catalogLinks.prev));
+  els.catalogNext.addEventListener("click", () => catalogLinks.next && loadCatalog(catalogLinks.next));
 
   els.catalogCommit.addEventListener("click", async () => {
     showError(els.catalogError, "");
@@ -515,13 +555,16 @@
       els.catalogStatus.textContent =
         `Selected: ${result.selected.length}, Deselected: ${result.deselected.length}, ` +
         `Not found: ${result.notFound.length}`;
-      // Refresh from server truth so baseline/thumbnails/pagination stay correct.
-      await loadCatalog();
+      // Every pending change has now been applied, so drop the accumulated state entirely and
+      // refresh from server truth - staying on the page being viewed rather than jumping to 1.
+      baseline = new Map();
+      pending = new Map();
+      await loadCatalog(catalogSelfLink ?? undefined);
     } catch (err) {
       showError(els.catalogError, err.message);
       updatePendingSummary();
     }
   });
 
-  els.catalogLoad.addEventListener("click", loadCatalog);
+  els.catalogLoad.addEventListener("click", () => loadCatalog());
 })();

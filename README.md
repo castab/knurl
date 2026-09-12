@@ -122,7 +122,7 @@ Migrations live in `shared-domain/src/main/resources/db/migration` and run autom
 
 The Graph API has no endpoint to resolve an arbitrary shortcode to a media id directly — it only lists the account's own media. So `ingestion-service` catalogs the account's *entire* media feed into `instagram_media_catalog` every sync cycle (metadata only — no download, no S3 write), and an admin picks which of those get downloaded and shown:
 
-1. `GET /api/v1/admin/accounts/{accountId}/catalog` (optionally `?selected=false`) — browse candidates by shortcode, caption, and date.
+1. `GET /api/v1/admin/accounts/{accountId}/catalog` — browse candidates by shortcode, caption, and date, 50 per page. Narrow the search server-side with `?selected=false`, `?mediaType=VIDEO`, or `?includeNotDigestible=false` before paging through what's left.
 2. `PATCH /api/v1/admin/accounts/{accountId}/catalog/selections` with the shortcodes to select/deselect (see the API reference below).
 3. On the next sync cycle, `ingestion-service` downloads and stores any newly-selected, not-yet-synced item.
 
@@ -130,9 +130,41 @@ The Graph API has no endpoint to resolve an arbitrary shortcode to a media id di
 
 ## API
 
-- `GET /api/v1/accounts/{accountId}/gallery?sort=recent|views&limit=12` — public. `limit` defaults to `12` and is silently clamped to the range `1..50`; `sort` must be `recent` or `views` (anything else returns `400`). Each post carries a `mediaItems` array (one entry per downloaded image/video, in carousel display order — a single-image/video post still has exactly one entry) of presigned S3 GET URLs (valid for `S3_PRESIGNED_GET_TTL_SECONDS`, default 6h), each with `smallUrl`/`largeUrl`/`videoUrl`/`mediaUrlExpiresAt` so consumers know when to refetch. `CAROUSEL_ALBUM` posts can have multiple entries; other `mediaType`s always have exactly one.
+- `GET /api/v1/accounts/{accountId}/gallery?sort=recent|views&limit=12&page=1` — public, paginated (see [Paginated responses](#paginated-responses)). `limit` defaults to `12` and is silently clamped to `1..50`; `page` defaults to `1`. `sort` must be `recent` or `views` (anything else returns `400`). Each post in `data` carries a `mediaItems` array (one entry per downloaded image/video, in carousel display order — a single-image/video post still has exactly one entry) of presigned S3 GET URLs (valid for `S3_PRESIGNED_GET_TTL_SECONDS`, default 6h), each with `smallUrl`/`largeUrl`/`videoUrl`/`mediaUrlExpiresAt` so consumers know when to refetch. `CAROUSEL_ALBUM` posts can have multiple entries; other `mediaType`s always have exactly one.
 - `POST /api/v1/accounts/{accountId}/gallery/track` — requires `Authorization: Bearer <API_BEARER_TOKEN>`. Body: `{ "id": "<post uuid>", "event": "view" | "click" }`.
-- `GET /api/v1/admin/accounts/{accountId}/catalog?selected=true|false` — requires `Authorization: Bearer <that account's ADMIN_TOKEN>`. Lists catalog entries, optionally filtered by selection state. `404` for an unregistered account, `401` for the wrong token.
+- `GET /api/v1/admin/accounts/{accountId}/catalog` — requires `Authorization: Bearer <that account's ADMIN_TOKEN>`. Paginated in the same envelope as the gallery, with `limit` defaulting to `50` (clamped to `1..50`) and `page` to `1`. Filters apply server-side, across the whole catalog rather than one page:
+  - `selected=true|false` — by selection state.
+  - `mediaType=IMAGE|VIDEO|CAROUSEL_ALBUM` — repeatable (`?mediaType=IMAGE&mediaType=VIDEO`); omit for all types.
+  - `includeNotDigestible=true|false` — defaults to `true`; `false` hides items ingestion has flagged as never downloadable.
+
+  Any unrecognised filter value returns `400`. `404` for an unregistered account, `401` for the wrong token.
 - `PATCH /api/v1/admin/accounts/{accountId}/catalog/selections` — same auth. Body: `{ "select": ["Cabc123XYZ"], "deselect": [] }`. Returns `{ "selected": [...], "deselected": [...], "notFound": [...] }` (a typo'd shortcode shows up in `notFound`, the rest of the request still applies).
 - `GET /openapi.json` — the generated OpenAPI 3 contract for the above.
+
+### Paginated responses
+
+Both list endpoints (gallery and catalog) return the same envelope. A page holds at most **50 records** on either endpoint:
+
+```json
+{
+  "data": [ { "id": "...", "mediaType": "IMAGE" } ],
+  "pagination": {
+    "totalRecords": 493,
+    "currentPage": 2,
+    "totalPages": 10,
+    "links": {
+      "first": "/api/v1/accounts/1784.../gallery?sort=recent&limit=50&page=1",
+      "prev":  "/api/v1/accounts/1784.../gallery?sort=recent&limit=50&page=1",
+      "self":  "/api/v1/accounts/1784.../gallery?sort=recent&limit=50&page=2",
+      "next":  "/api/v1/accounts/1784.../gallery?sort=recent&limit=50&page=3",
+      "last":  "/api/v1/accounts/1784.../gallery?sort=recent&limit=50&page=10"
+    }
+  }
+}
+```
+
+- `totalRecords` is the total matching the query, not the size of `data` — apply a filter and it shrinks accordingly.
+- `prev` and `next` are `null` on the first and last page. `first`, `self` and `last` are always present; an empty result set still reports a coherent page 1 of 1.
+- Links are **relative** (path + query) and preserve every query parameter you sent, rewriting only `page` — so following `next` keeps your sort and filters. Prefer following them to assembling URLs yourself.
+- Both `limit` and `page` are silently clamped rather than rejected: `limit` into `1..50`, and `page` into `1..totalPages`. Asking for page 999 of 10 returns page 10, and `pagination.currentPage` tells you which page you actually got.
 - `GET /docs` — a Swagger UI browsing that contract interactively.

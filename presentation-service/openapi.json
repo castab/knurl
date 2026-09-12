@@ -14,7 +14,7 @@
   "paths" : {
     "/api/v1/accounts/{accountId}/gallery" : {
       "get" : {
-        "summary" : "List gallery posts for an account, sorted by recency or view count",
+        "summary" : "List a page of gallery posts for an account, sorted by recency or view count",
         "description" : null,
         "tags" : [ "" ],
         "parameters" : [ {
@@ -35,6 +35,14 @@
           "description" : null
         }, {
           "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "page",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
             "type" : "string"
           },
           "in" : "path",
@@ -48,7 +56,7 @@
             "content" : {
               "application/json" : {
                 "example" : {
-                  "items" : [ {
+                  "data" : [ {
                     "id" : "01234567-89ab-cdef-0123-456789abcdef",
                     "mediaType" : "IMAGE",
                     "caption" : "An example caption",
@@ -63,7 +71,18 @@
                     "viewCount" : 0,
                     "clickCount" : 0
                   } ],
-                  "count" : 1
+                  "pagination" : {
+                    "totalRecords" : 100,
+                    "currentPage" : 2,
+                    "totalPages" : 10,
+                    "links" : {
+                      "first" : "/api/v1/accounts/{accountId}/gallery?page=1",
+                      "prev" : "/api/v1/accounts/{accountId}/gallery?page=1",
+                      "self" : "/api/v1/accounts/{accountId}/gallery?page=2",
+                      "next" : "/api/v1/accounts/{accountId}/gallery?page=3",
+                      "last" : "/api/v1/accounts/{accountId}/gallery?page=10"
+                    }
+                  }
                 },
                 "schema" : {
                   "$ref" : "#/components/schemas/GalleryResponse",
@@ -137,7 +156,7 @@
     },
     "/api/v1/admin/accounts/{accountId}/catalog" : {
       "get" : {
-        "summary" : "List catalog entries for an account, optionally filtered by selection state",
+        "summary" : "List a page of catalog entries for an account, optionally filtered",
         "description" : null,
         "tags" : [ "" ],
         "parameters" : [ {
@@ -146,6 +165,41 @@
           },
           "in" : "query",
           "name" : "selected",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "query",
+          "name" : "includeNotDigestible",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "in" : "query",
+          "name" : "mediaType",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "page",
           "required" : false,
           "description" : null
         }, {
@@ -163,7 +217,7 @@
             "content" : {
               "application/json" : {
                 "example" : {
-                  "items" : [ {
+                  "data" : [ {
                     "shortcode" : "Cabc123XYZ",
                     "mediaType" : "IMAGE",
                     "caption" : "An example caption",
@@ -173,7 +227,18 @@
                     "notDigestibleReason" : "copyright",
                     "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp"
                   } ],
-                  "count" : 1
+                  "pagination" : {
+                    "totalRecords" : 100,
+                    "currentPage" : 2,
+                    "totalPages" : 10,
+                    "links" : {
+                      "first" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+                      "prev" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+                      "self" : "/api/v1/admin/accounts/{accountId}/catalog?page=2",
+                      "next" : "/api/v1/admin/accounts/{accountId}/catalog?page=3",
+                      "last" : "/api/v1/admin/accounts/{accountId}/catalog?page=10"
+                    }
+                  }
                 },
                 "schema" : {
                   "$ref" : "#/components/schemas/AdminCatalogResponse",
@@ -255,7 +320,7 @@
     "schemas" : {
       "GalleryResponse" : {
         "properties" : {
-          "items" : {
+          "data" : {
             "items" : {
               "$ref" : "#/components/schemas/GalleryItemResponse"
             },
@@ -277,14 +342,14 @@
             "format" : null,
             "type" : "array"
           },
-          "count" : {
-            "example" : 1,
-            "format" : "int32",
-            "type" : "integer"
+          "pagination" : {
+            "$ref" : "#/components/schemas/PaginationMeta",
+            "example" : null,
+            "format" : null
           }
         },
         "example" : {
-          "items" : [ {
+          "data" : [ {
             "id" : "01234567-89ab-cdef-0123-456789abcdef",
             "mediaType" : "IMAGE",
             "caption" : "An example caption",
@@ -299,11 +364,22 @@
             "viewCount" : 0,
             "clickCount" : 0
           } ],
-          "count" : 1
+          "pagination" : {
+            "totalRecords" : 100,
+            "currentPage" : 2,
+            "totalPages" : 10,
+            "links" : {
+              "first" : "/api/v1/accounts/{accountId}/gallery?page=1",
+              "prev" : "/api/v1/accounts/{accountId}/gallery?page=1",
+              "self" : "/api/v1/accounts/{accountId}/gallery?page=2",
+              "next" : "/api/v1/accounts/{accountId}/gallery?page=3",
+              "last" : "/api/v1/accounts/{accountId}/gallery?page=10"
+            }
+          }
         },
         "format" : null,
         "type" : "object",
-        "required" : [ "count", "items" ]
+        "required" : [ "data", "pagination" ]
       },
       "GalleryItemResponse" : {
         "properties" : {
@@ -408,6 +484,84 @@
         "type" : "object",
         "required" : [ "largeUrl", "mediaUrlExpiresAt", "smallUrl" ]
       },
+      "PaginationMeta" : {
+        "properties" : {
+          "totalRecords" : {
+            "example" : 100,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "currentPage" : {
+            "example" : 2,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "totalPages" : {
+            "example" : 10,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "links" : {
+            "$ref" : "#/components/schemas/PaginationLinks",
+            "example" : null,
+            "format" : null
+          }
+        },
+        "example" : {
+          "totalRecords" : 100,
+          "currentPage" : 2,
+          "totalPages" : 10,
+          "links" : {
+            "first" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+            "prev" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+            "self" : "/api/v1/admin/accounts/{accountId}/catalog?page=2",
+            "next" : "/api/v1/admin/accounts/{accountId}/catalog?page=3",
+            "last" : "/api/v1/admin/accounts/{accountId}/catalog?page=10"
+          }
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "currentPage", "links", "totalPages", "totalRecords" ]
+      },
+      "PaginationLinks" : {
+        "properties" : {
+          "first" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+            "format" : null,
+            "type" : "string"
+          },
+          "prev" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "self" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=2",
+            "format" : null,
+            "type" : "string"
+          },
+          "next" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=3",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "last" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=10",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "first" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+          "prev" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+          "self" : "/api/v1/admin/accounts/{accountId}/catalog?page=2",
+          "next" : "/api/v1/admin/accounts/{accountId}/catalog?page=3",
+          "last" : "/api/v1/admin/accounts/{accountId}/catalog?page=10"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "first", "last", "self" ]
+      },
       "TrackResponse" : {
         "properties" : {
           "status" : {
@@ -446,7 +600,7 @@
       },
       "AdminCatalogResponse" : {
         "properties" : {
-          "items" : {
+          "data" : {
             "items" : {
               "$ref" : "#/components/schemas/AdminCatalogItemResponse"
             },
@@ -463,14 +617,14 @@
             "format" : null,
             "type" : "array"
           },
-          "count" : {
-            "example" : 1,
-            "format" : "int32",
-            "type" : "integer"
+          "pagination" : {
+            "$ref" : "#/components/schemas/PaginationMeta",
+            "example" : null,
+            "format" : null
           }
         },
         "example" : {
-          "items" : [ {
+          "data" : [ {
             "shortcode" : "Cabc123XYZ",
             "mediaType" : "IMAGE",
             "caption" : "An example caption",
@@ -480,11 +634,22 @@
             "notDigestibleReason" : "copyright",
             "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp"
           } ],
-          "count" : 1
+          "pagination" : {
+            "totalRecords" : 100,
+            "currentPage" : 2,
+            "totalPages" : 10,
+            "links" : {
+              "first" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+              "prev" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+              "self" : "/api/v1/admin/accounts/{accountId}/catalog?page=2",
+              "next" : "/api/v1/admin/accounts/{accountId}/catalog?page=3",
+              "last" : "/api/v1/admin/accounts/{accountId}/catalog?page=10"
+            }
+          }
         },
         "format" : null,
         "type" : "object",
-        "required" : [ "count", "items" ]
+        "required" : [ "data", "pagination" ]
       },
       "AdminCatalogItemResponse" : {
         "properties" : {

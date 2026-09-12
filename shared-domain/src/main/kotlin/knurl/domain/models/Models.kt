@@ -126,6 +126,62 @@ data class SyncConfiguration(
     val value: String,
 )
 
+/**
+ * One page of rows plus the total number matching the query, for offset pagination.
+ *
+ * [currentPage] and [totalPages] are 1-based, and [currentPage] is the *effective* page actually
+ * fetched - see [of], which clamps the caller's request rather than erroring. Callers rendering an
+ * HTTP envelope should report these two fields rather than echoing what the client asked for.
+ */
+data class Page<T>(
+    val items: List<T>,
+    val totalRecords: Int,
+    val currentPage: Int,
+    val totalPages: Int,
+) {
+    companion object {
+        /**
+         * Clamps [requestedPage] into `1..totalPages` and invokes [fetch] with the corresponding
+         * row offset. Clamping (rather than rejecting) matches the silent `coerceIn` convention
+         * the gallery's `limit` parameter already uses.
+         *
+         * [totalPages] is at least 1 even for an empty result set, so a caller always has a
+         * coherent page to link to. When nothing matched, [fetch] is skipped entirely - there is
+         * no point issuing a row query that cannot return anything.
+         */
+        fun <T> of(
+            totalRecords: Int,
+            pageSize: Int,
+            requestedPage: Int,
+            fetch: (offset: Int) -> List<T>,
+        ): Page<T> {
+            require(pageSize > 0) { "pageSize must be positive, was $pageSize" }
+            val totalPages = if (totalRecords <= 0) 1 else (totalRecords + pageSize - 1) / pageSize
+            val currentPage = requestedPage.coerceIn(1, totalPages)
+            val items = if (totalRecords <= 0) emptyList() else fetch((currentPage - 1) * pageSize)
+            return Page(
+                items = items,
+                totalRecords = maxOf(totalRecords, 0),
+                currentPage = currentPage,
+                totalPages = totalPages,
+            )
+        }
+    }
+}
+
+/**
+ * Server-side filters for [knurl.domain.repositories.CatalogRepository.findPage]. Grouped into one
+ * type rather than passed as loose parameters so the row query and its matching `COUNT(*)` cannot
+ * drift apart - a paginated response whose total disagrees with its rows is worse than no total.
+ *
+ * An empty [mediaTypes] means "no media-type restriction", not "match nothing".
+ */
+data class CatalogFilter(
+    val selected: Boolean? = null,
+    val mediaTypes: Set<String> = emptySet(),
+    val includeNotDigestible: Boolean = true,
+)
+
 enum class SortOrder {
     RECENT,
     VIEWS,
