@@ -30,6 +30,6 @@ dependencies {
 
     // SLF4J binding. Without one, slf4j-api falls back to NOP and this service produces no logs at all -
     // no request log, no failed-auth record, no Hikari/Undertow/AWS SDK diagnostics.
-    // Same binding and version as ingestion-service. See REMEDIATION-PLAN.md P7.
+    // Same binding and version as ingestion-service.
     implementation("org.slf4j:slf4j-simple:2.0.16")
 }

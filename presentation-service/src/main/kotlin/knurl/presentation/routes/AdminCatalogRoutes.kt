@@ -139,7 +139,7 @@ class AdminCatalogRoutes(
         }
     }
 
-    // TODO(REMEDIATION-PLAN.md P8): this returns the entire catalog with no limit, presigning one URL per
+    // TODO: this returns the entire catalog with no limit, presigning one URL per
     // row. Needs server-side limit/offset (clamped like GalleryRoutes' coerceIn(1, 50)) plus matching
     // paging in public/app.js, which currently fetches everything and paginates client-side.
     private fun listCatalog(): ContractRoute =

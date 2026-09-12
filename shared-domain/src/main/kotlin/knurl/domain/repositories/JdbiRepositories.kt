@@ -278,7 +278,7 @@ class InstagramPostRepository(
      * BOTH the top [maxRecentCount] by recency AND the top [maxViewCount] by views - i.e. a post
      * survives if it is pinned, selected, or in either top-N set. The `selected` exclusion is what
      * stops eviction from deleting media that `SyncPipeline` would immediately re-download on the next
-     * cycle (an unbounded download/delete loop) - see REMEDIATION-PLAN.md P3. Ranking uses `id` as a
+     * cycle (an unbounded download/delete loop). Ranking uses `id` as a
      * tiebreaker so the window is stable across cycles when many posts share a view count.
      * Scoped to one account so retention is computed within that account's own pool, never
      * blended with another account's posts sharing this database. Media paths (for the S3 delete

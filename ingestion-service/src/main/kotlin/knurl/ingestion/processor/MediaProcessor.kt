@@ -18,7 +18,6 @@ private const val WEBP_QUALITY = 80
  * Hard ceiling on a source image download before it is decoded. Decoding produces an uncompressed
  * raster roughly `width * height * 4` bytes, so an unbounded source is the most direct route to an OOM
  * under the 128MB heap budget. Instagram's own CDN assets sit far below this.
- * See REMEDIATION-PLAN.md P10.
  */
 private const val MAX_SOURCE_IMAGE_BYTES = 32L * 1024 * 1024
 
@@ -76,7 +75,7 @@ class MediaProcessor(
      * Single download-and-decode path for both image entry points. Checks the HTTP status before
      * decoding (a 4xx error body previously reached the decoder and surfaced as a misleading
      * "unsupported format" error) and refuses a source larger than [MAX_SOURCE_IMAGE_BYTES], since the
-     * decoded raster is unbounded relative to the compressed download. See REMEDIATION-PLAN.md P10.
+     * decoded raster is unbounded relative to the compressed download.
      */
     private fun downloadImage(sourceUrl: String): ImmutableImage {
         val request = Request.Builder().url(sourceUrl).build()
@@ -113,7 +112,7 @@ class MediaProcessor(
             val body = response.body ?: throw IOException("Empty video body for $sourceUrl")
             // Allowlisted, not taken verbatim: this value is stored on the S3 object and replayed by every
             // presigned GET, so an unexpected upstream Content-Type would be served from the bucket origin
-            // as-is. Images are already pinned to image/webp. See REMEDIATION-PLAN.md P20.
+            // as-is. Images are already pinned to image/webp.
             val upstreamContentType = body.contentType()?.let { "${it.type}/${it.subtype}" }
             val contentType = if (upstreamContentType in ALLOWED_VIDEO_CONTENT_TYPES) upstreamContentType!! else "video/mp4"
             val contentLength = body.contentLength()

@@ -55,7 +55,6 @@
 
   // The account id is not a secret and is persisted across browser sessions for convenience. The two
   // tokens are secrets and go to sessionStorage instead, so they do not survive the tab being closed.
-  // See REMEDIATION-PLAN.md P11.
   const SECRET_FIELDS = new Set(["apiBearerToken", "adminToken"]);
 
   for (const [field, key] of Object.entries(CONFIG_KEYS)) {
@@ -91,7 +90,6 @@
   // Escapes for BOTH text and quoted-attribute contexts. The textContent/innerHTML round-trip used
   // previously escaped only & < >, because HTML text-node serialization leaves quotes alone - which is
   // unsafe here since every call site below interpolates into a double-quoted attribute.
-  // See REMEDIATION-PLAN.md P6.
   function escapeHtml(value) {
     return String(value ?? "")
       .replaceAll("&", "&amp;")

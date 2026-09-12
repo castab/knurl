@@ -118,7 +118,7 @@ fun thumbnailSourceUrl(item: MediaItem): String? {
     // Branch on the resolved CHILD's media type, not the post's. A CAROUSEL_ALBUM whose first child is a
     // video previously fell into the else-branch and returned that child's `media_url` - an .mp4 handed
     // to the image decoder, which fails every cycle and re-downloads the whole video each time because
-    // `thumbnail_path` never gets set. See REMEDIATION-PLAN.md P5.
+    // `thumbnail_path` never gets set.
     val child = resolveChildren(item).firstOrNull() ?: return null
     return if (child.mediaType == "VIDEO") {
         if (notDigestibleReason(item) == NOT_DIGESTIBLE_REASON_COPYRIGHT) null else child.thumbnailUrl
@@ -244,7 +244,6 @@ class SyncPipeline(
 
         // An unparseable timestamp previously propagated all the way out of runOnce and aborted the whole
         // sync cycle, skipping every remaining item in the feed. Skip just this item instead.
-        // See REMEDIATION-PLAN.md P19.
         val timestamp =
             runCatching { OffsetDateTime.parse(item.timestamp, INSTAGRAM_TIMESTAMP_FORMATTER).toInstant() }
                 .getOrElse {
@@ -377,7 +376,7 @@ class SyncPipeline(
 
         // A post with no media rows has nothing to delete from S3, and DeleteObjects rejects an empty
         // object list outright (MalformedXML) - which previously aborted this candidate before the row
-        // delete and left it retrying forever. See REMEDIATION-PLAN.md P9.
+        // delete and left it retrying forever.
         if (objectIds.isEmpty()) {
             log.warn("Eviction candidate ${candidate.id} has no media paths; deleting the row only")
             postRepository.deleteById(candidate.id)

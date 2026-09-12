@@ -35,7 +35,7 @@ object DatabaseConfig {
         // A URL whose password contains an unencoded reserved character (most often `@`) leaves
         // URI.getHost() null rather than throwing. Without this guard that produced a silently broken
         // "jdbc:postgresql://null:-1/db" with null credentials, surfacing much later as an opaque
-        // connection failure. Fail fast at config load instead - see REMEDIATION-PLAN.md P4.
+        // connection failure. Fail fast at config load instead.
         val host =
             uri.host
                 ?: throw IllegalArgumentException(

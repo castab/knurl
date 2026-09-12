@@ -48,11 +48,11 @@ fun main() =
                 // first so that a deployed environment's real env vars (resolved into it by typesafe-config's
                 // ${?VAR} substitution) outrank the dev defaults below. When a ${?VAR} is unset the key is
                 // dropped from this source entirely, so local development still falls through to the two
-                // local files. Do not reorder these lines - see REMEDIATION-PLAN.md P1.
+                // local files. Do not reorder these lines.
                 .addPropertySource(PropertySource.resource("/application.conf"))
                 // Loaded from disk, NOT the classpath: this file holds real Instagram credentials and must
                 // never be packaged into the jar/image. Resolved relative to the Gradle `run` task's working
-                // directory, which is `ingestion-service/`. See REMEDIATION-PLAN.md P2.
+                // directory, which is `ingestion-service/`.
                 .addPropertySource(PropertySource.file(File("config/application-instagram.conf"), optional = true))
                 .addPropertySource(PropertySource.resource("/application-local.conf", optional = true))
                 .build()
