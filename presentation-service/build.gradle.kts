@@ -33,3 +33,17 @@ dependencies {
     // Same binding and version as ingestion-service.
     implementation("org.slf4j:slf4j-simple:2.0.16")
 }
+
+/**
+ * Dumps the live OpenAPI spec (same route definitions [Main] serves at GET /openapi.json) to a
+ * file, without needing a running Postgres/MinIO/HTTP server - see GenerateOpenApiSpec.kt.
+ * Usage: ./gradlew :presentation-service:generateOpenApiSpec
+ * Output defaults to build/openapi/openapi.json; override with --args="path/to/output.json".
+ */
+tasks.register<JavaExec>("generateOpenApiSpec") {
+    group = "documentation"
+    description = "Generates the presentation-service OpenAPI spec to build/openapi/openapi.json"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("knurl.presentation.openapi.GenerateOpenApiSpecKt")
+    args(layout.buildDirectory.file("openapi/openapi.json").get().asFile.path)
+}
