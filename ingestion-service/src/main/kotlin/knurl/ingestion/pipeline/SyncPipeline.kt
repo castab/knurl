@@ -330,7 +330,13 @@ class SyncPipeline(
                         Triple(imageKeys.smallKey, imageKeys.largeKey, null as String?)
                     }
 
-                PostMediaItemUpsert(position = position, smallPath = smallPath, largePath = largePath, videoPath = videoPath)
+                PostMediaItemUpsert(
+                    position = position,
+                    mediaType = child.mediaType,
+                    smallPath = smallPath,
+                    largePath = largePath,
+                    videoPath = videoPath,
+                )
             }
 
         postRepository.upsert(

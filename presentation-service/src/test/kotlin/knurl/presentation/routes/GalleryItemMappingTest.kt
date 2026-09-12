@@ -31,31 +31,32 @@ private fun testPresigner(ttl: Duration = Duration.ofHours(6)): Presigner =
 private fun testMediaItem(
     postId: Uuid,
     position: Int,
+    mediaType: String = "IMAGE",
     videoPath: String? = null,
 ): PostMediaItem =
     PostMediaItem(
         id = Uuid.random(),
         postId = postId,
         position = position,
+        mediaType = mediaType,
         smallPath = "posts/media-1/$position/small.webp",
         largePath = "posts/media-1/$position/large.webp",
         videoPath = videoPath,
     )
 
+/**
+ * The post's own mediaType is CAROUSEL_ALBUM for more than one item, else it mirrors the single
+ * item's own [PostMediaItem.mediaType] - deliberately the only place this post-level aggregate is
+ * derived from an item, so every test below can rely on it never leaking back into
+ * [GalleryMediaItemResponse.mediaType], which must always carry that item's own value.
+ */
 private fun testPost(mediaItems: List<PostMediaItem>): InstagramPost {
     val postId = mediaItems.firstOrNull()?.postId ?: Uuid.random()
     return InstagramPost(
         id = postId,
         instagramAccountId = "account-1",
         instagramMediaId = "media-1",
-        mediaType =
-            if (mediaItems.size > 1) {
-                "CAROUSEL_ALBUM"
-            } else if (mediaItems.single().videoPath != null) {
-                "VIDEO"
-            } else {
-                "IMAGE"
-            },
+        mediaType = if (mediaItems.size > 1) "CAROUSEL_ALBUM" else mediaItems.single().mediaType,
         caption = "a caption",
         permalink = "https://www.instagram.com/p/abc/",
         timestamp = Instant.parse("2024-01-01T00:00:00Z"),
@@ -88,14 +89,15 @@ class GalleryItemMappingTest :
 
         test("signs the video path when present") {
             val postId = Uuid.random()
-            val item = testMediaItem(postId, position = 0, videoPath = "posts/media-1/0/original")
+            val item = testMediaItem(postId, position = 0, mediaType = "VIDEO", videoPath = "posts/media-1/0/original")
             val post = testPost(listOf(item))
 
             val response = post.toResponse(testPresigner())
 
-            val videoUrl = response.mediaItems.single().videoUrl
-            videoUrl.shouldNotBeNull()
-            videoUrl shouldContain "posts/media-1/0/original"
+            val mediaResponse = response.mediaItems.single()
+            mediaResponse.mediaType shouldBe "VIDEO"
+            mediaResponse.videoUrl.shouldNotBeNull()
+            mediaResponse.videoUrl shouldContain "posts/media-1/0/original"
         }
 
         test("leaves videoUrl null when an item has no video path") {
@@ -105,10 +107,23 @@ class GalleryItemMappingTest :
 
             val response = post.toResponse(testPresigner())
 
-            response.mediaItems
-                .single()
-                .videoUrl
-                .shouldBeNull()
+            val mediaResponse = response.mediaItems.single()
+            mediaResponse.mediaType shouldBe "IMAGE"
+            mediaResponse.videoUrl.shouldBeNull()
+        }
+
+        test("mediaType is copied straight from the stored item, not derived from videoPath") {
+            // A video whose download hasn't finished yet can have mediaType VIDEO with a null
+            // videoPath - the two fields answer different questions, see PostMediaItem's kdoc.
+            val postId = Uuid.random()
+            val item = testMediaItem(postId, position = 0, mediaType = "VIDEO", videoPath = null)
+            val post = testPost(listOf(item))
+
+            val response = post.toResponse(testPresigner())
+
+            val mediaResponse = response.mediaItems.single()
+            mediaResponse.mediaType shouldBe "VIDEO"
+            mediaResponse.videoUrl.shouldBeNull()
         }
 
         test("carousel: signs every media item in position order, independently") {
@@ -116,10 +131,11 @@ class GalleryItemMappingTest :
             val items =
                 listOf(
                     testMediaItem(postId, position = 0),
-                    testMediaItem(postId, position = 1, videoPath = "posts/media-1/1/original"),
+                    testMediaItem(postId, position = 1, mediaType = "VIDEO", videoPath = "posts/media-1/1/original"),
                     testMediaItem(postId, position = 2),
                 )
             val post = testPost(items)
+            post.mediaType shouldBe "CAROUSEL_ALBUM"
 
             val response = post.toResponse(testPresigner())
 
@@ -128,6 +144,9 @@ class GalleryItemMappingTest :
                 val item = items[index]
                 mediaResponse.smallUrl shouldContain item.smallPath
                 mediaResponse.largeUrl shouldContain item.largePath
+                // Each item's own mediaType must survive the mapping untouched - never overwritten
+                // by the post's aggregate CAROUSEL_ALBUM value.
+                mediaResponse.mediaType shouldBe item.mediaType
                 if (item.videoPath != null) {
                     mediaResponse.videoUrl.shouldNotBeNull()
                     mediaResponse.videoUrl shouldContain item.videoPath!!

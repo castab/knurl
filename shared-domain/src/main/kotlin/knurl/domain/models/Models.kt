@@ -33,14 +33,19 @@ data class InstagramPost(
 
 /**
  * One downloaded image/video belonging to a post, in carousel display order. Most posts have
- * exactly one of these (`position` 0); `CAROUSEL_ALBUM` posts have one per child. A null
- * `videoPath` means this item is an image - the same convention [InstagramPost] used before this
- * became a one-to-many relationship.
+ * exactly one of these (`position` 0); `CAROUSEL_ALBUM` posts have one per child.
+ *
+ * [mediaType] (`"IMAGE"`/`"VIDEO"`) is this child's own type as reported by the Graph API -
+ * independent of the owning [InstagramPost.mediaType], which for a `CAROUSEL_ALBUM` post says
+ * nothing about any individual child. [videoPath] answers a different question (has a video asset
+ * actually been downloaded to S3?), not the media's semantic type - a video whose download hasn't
+ * completed yet can have [mediaType] `"VIDEO"` and a null [videoPath].
  */
 data class PostMediaItem(
     val id: Uuid,
     val postId: Uuid,
     val position: Int,
+    val mediaType: String,
     val smallPath: String,
     val largePath: String,
     val videoPath: String?,
@@ -49,6 +54,7 @@ data class PostMediaItem(
 /** Input to [InstagramPostRepository.upsert][knurl.domain.repositories.InstagramPostRepository.upsert] for one [PostMediaItem], before it has a surrogate `id`/`postId`. */
 data class PostMediaItemUpsert(
     val position: Int,
+    val mediaType: String,
     val smallPath: String,
     val largePath: String,
     val videoPath: String?,

@@ -63,6 +63,7 @@
                     "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
                     "timestamp" : "2024-01-01T00:00:00Z",
                     "mediaItems" : [ {
+                      "mediaType" : "IMAGE",
                       "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
                       "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
                       "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
@@ -331,6 +332,7 @@
               "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
               "timestamp" : "2024-01-01T00:00:00Z",
               "mediaItems" : [ {
+                "mediaType" : "IMAGE",
                 "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
                 "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
                 "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
@@ -356,6 +358,7 @@
             "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
             "timestamp" : "2024-01-01T00:00:00Z",
             "mediaItems" : [ {
+              "mediaType" : "IMAGE",
               "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
               "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
               "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
@@ -413,6 +416,7 @@
               "$ref" : "#/components/schemas/GalleryMediaItemResponse"
             },
             "example" : [ {
+              "mediaType" : "IMAGE",
               "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
               "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
               "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
@@ -439,6 +443,7 @@
           "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
           "timestamp" : "2024-01-01T00:00:00Z",
           "mediaItems" : [ {
+            "mediaType" : "IMAGE",
             "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
             "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
             "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
@@ -453,6 +458,11 @@
       },
       "GalleryMediaItemResponse" : {
         "properties" : {
+          "mediaType" : {
+            "example" : "IMAGE",
+            "format" : null,
+            "type" : "string"
+          },
           "smallUrl" : {
             "example" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
             "format" : null,
@@ -475,6 +485,7 @@
           }
         },
         "example" : {
+          "mediaType" : "IMAGE",
           "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
           "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
           "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
@@ -482,7 +493,7 @@
         },
         "format" : null,
         "type" : "object",
-        "required" : [ "largeUrl", "mediaUrlExpiresAt", "smallUrl" ]
+        "required" : [ "largeUrl", "mediaType", "mediaUrlExpiresAt", "smallUrl" ]
       },
       "PaginationMeta" : {
         "properties" : {

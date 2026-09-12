@@ -44,13 +44,17 @@ CREATE TABLE instagram_posts (
 
 -- 2b. Per-post Media Items (Local Railway S3 Object Storage Paths)
 -- One row per downloaded image/video belonging to a post, ordered by `position`. Most posts have
--- exactly one row (position 0); CAROUSEL_ALBUM posts have one row per child, in carousel display
--- order. A nullable `video_path` alone signals "this item is a video" - the same convention as
--- everywhere else in this schema - so there's no separate media-type column here.
+-- exactly one row (position 0); CAROUSEL_ALBUM posts have one per child, in carousel display
+-- order. `media_type` (`IMAGE`/`VIDEO`) is the authoritative per-item type reported by the Graph
+-- API for this child - independent of the post's own `instagram_posts.media_type`, which for a
+-- CAROUSEL_ALBUM post says nothing about any individual child. `video_path` stays a separate
+-- nullable column rather than being inferred from `media_type`: it answers a different question
+-- (has a video asset actually been downloaded to S3?), not the media's semantic type.
 CREATE TABLE instagram_post_media (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     post_id UUID NOT NULL REFERENCES instagram_posts (id) ON DELETE CASCADE,
     position INT NOT NULL,
+    media_type VARCHAR(20) NOT NULL,
     small_path TEXT NOT NULL,
     large_path TEXT NOT NULL,
     video_path TEXT,
@@ -88,19 +92,25 @@ CREATE TABLE instagram_media_catalog (
 
 -- 4. Ingestion & Scope Constraints Key-Value Registry
 -- Global, not per-account: every account's retention eviction uses the same numeric limits,
--- applied independently within each account's own post pool (see idx_posts_account).
+-- applied independently within each account's own post pool (see idx_posts_account_timestamp).
 CREATE TABLE sync_configurations (
     key VARCHAR(50) PRIMARY KEY,
     value TEXT NOT NULL
 );
 
--- Create strategic indexes to support fast, low-latency API sorting limits
-CREATE INDEX idx_posts_timestamp ON instagram_posts (timestamp DESC);
-CREATE INDEX idx_posts_view_count ON instagram_posts (view_count DESC);
+-- Create strategic indexes to support fast, low-latency API sorting limits.
+--
+-- The composite indexes below are account-scoped AND carry the same trailing tiebreaker column
+-- used by InstagramPostRepository.findPage / CatalogRepository.findPage's ORDER BY (`id` /
+-- `instagram_media_id`). That tiebreaker is a correctness requirement for offset pagination, not
+-- just a performance one: `timestamp`/`view_count` alone are not unique, and paging over a
+-- partial order lets the same row appear on two pages (or on neither). A composite index's
+-- leading column already serves any plain account-only equality lookup (e.g. existingMediaIds,
+-- selectedMediaIds, mediaIdsNeedingThumbnail), so no separate single-column account index is kept.
+CREATE INDEX idx_posts_account_timestamp ON instagram_posts (instagram_account_id, timestamp DESC, id);
+CREATE INDEX idx_posts_account_view_count ON instagram_posts (instagram_account_id, view_count DESC, id);
 CREATE INDEX idx_posts_pinned_status ON instagram_posts (is_pinned);
-CREATE INDEX idx_posts_account ON instagram_posts (instagram_account_id);
 CREATE INDEX idx_post_media_post_id ON instagram_post_media (post_id);
 CREATE INDEX idx_catalog_selected ON instagram_media_catalog (selected);
-CREATE INDEX idx_catalog_timestamp ON instagram_media_catalog (timestamp DESC);
-CREATE INDEX idx_catalog_account ON instagram_media_catalog (instagram_account_id);
+CREATE INDEX idx_catalog_account_timestamp ON instagram_media_catalog (instagram_account_id, timestamp DESC, instagram_media_id);
 CREATE INDEX idx_catalog_needs_thumbnail ON instagram_media_catalog (instagram_account_id) WHERE thumbnail_path IS NULL;

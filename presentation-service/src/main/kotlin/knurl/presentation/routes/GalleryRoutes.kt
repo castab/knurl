@@ -24,6 +24,7 @@ import kotlin.uuid.Uuid
 
 @Serializable
 data class GalleryMediaItemResponse(
+    val mediaType: String,
     val smallUrl: String,
     val largeUrl: String,
     val videoUrl: String?,
@@ -84,6 +85,7 @@ private val EXAMPLE_GALLERY_ITEM =
         mediaItems =
             listOf(
                 GalleryMediaItemResponse(
+                    mediaType = "IMAGE",
                     smallUrl = "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
                     largeUrl = "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
                     videoUrl = "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
@@ -97,6 +99,7 @@ private val EXAMPLE_GALLERY_ITEM =
 private fun PostMediaItem.toResponse(presigner: Presigner): GalleryMediaItemResponse {
     val small = presigner.presignGet(smallPath)
     return GalleryMediaItemResponse(
+        mediaType = mediaType,
         smallUrl = small.url,
         largeUrl = presigner.presignGet(largePath).url,
         videoUrl = videoPath?.let { presigner.presignGet(it).url },
