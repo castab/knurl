@@ -36,14 +36,15 @@ dependencies {
 
 /**
  * Dumps the live OpenAPI spec (same route definitions [Main] serves at GET /openapi.json) to a
- * file, without needing a running Postgres/MinIO/HTTP server - see GenerateOpenApiSpec.kt.
+ * checked-in file, without needing a running Postgres/MinIO/HTTP server - see
+ * GenerateOpenApiSpec.kt. Re-run and commit the result whenever a route changes.
  * Usage: ./gradlew :presentation-service:generateOpenApiSpec
- * Output defaults to build/openapi/openapi.json; override with --args="path/to/output.json".
+ * Output defaults to presentation-service/openapi.json; override with --args="path/to/output.json".
  */
 tasks.register<JavaExec>("generateOpenApiSpec") {
     group = "documentation"
-    description = "Generates the presentation-service OpenAPI spec to build/openapi/openapi.json"
+    description = "Generates the presentation-service OpenAPI spec to openapi.json"
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("knurl.presentation.openapi.GenerateOpenApiSpecKt")
-    args(layout.buildDirectory.file("openapi/openapi.json").get().asFile.path)
+    args(layout.projectDirectory.file("openapi.json").asFile.path)
 }

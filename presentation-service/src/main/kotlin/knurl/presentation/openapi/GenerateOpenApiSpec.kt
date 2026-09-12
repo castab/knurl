@@ -59,7 +59,9 @@ fun main(args: Array<String>) {
 
     val outputPath = args.firstOrNull() ?: "build/openapi/openapi.json"
     val outputFile = File(outputPath).also { it.parentFile?.mkdirs() }
-    outputFile.writeText(app(Request(Method.GET, "/openapi.json")).bodyString())
+    val rawJson = app(Request(Method.GET, "/openapi.json")).bodyString()
+    // Pretty-printed so the checked-in file diffs cleanly; the renderer itself emits it minified.
+    outputFile.writeText(Jackson.mapper.readTree(rawJson).toPrettyString())
     presigner.close()
 
     println("Wrote OpenAPI spec to ${outputFile.absolutePath}")

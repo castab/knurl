@@ -1,0 +1,628 @@
+{
+  "info" : {
+    "title" : "Knurl",
+    "version" : "v1.0",
+    "description" : null,
+    "summary" : null,
+    "license" : null
+  },
+  "tags" : [ ],
+  "servers" : [ {
+    "url" : "/",
+    "description" : null
+  } ],
+  "paths" : {
+    "/api/v1/accounts/{accountId}/gallery" : {
+      "get" : {
+        "summary" : "List gallery posts for an account, sorted by recency or view count",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "query",
+          "name" : "sort",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "items" : [ {
+                    "id" : "01234567-89ab-cdef-0123-456789abcdef",
+                    "mediaType" : "IMAGE",
+                    "caption" : "An example caption",
+                    "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+                    "timestamp" : "2024-01-01T00:00:00Z",
+                    "mediaItems" : [ {
+                      "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+                      "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+                      "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+                      "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+                    } ],
+                    "viewCount" : 0,
+                    "clickCount" : 0
+                  } ],
+                  "count" : 1
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/GalleryResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ ],
+        "operationId" : "getApiV1Accounts_accountId_Gallery",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/accounts/{accountId}/gallery/track" : {
+      "post" : {
+        "summary" : "Record a view or click analytics event for a post",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "example" : {
+                "id" : "id",
+                "event" : "view"
+              },
+              "schema" : {
+                "$ref" : "#/components/schemas/TrackRequest",
+                "example" : null,
+                "format" : null
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "status" : "ok"
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/TrackResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "galleryTrackingBearer" : [ ]
+        } ],
+        "operationId" : "postApiV1Accounts_accountId_GalleryTrack",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/catalog" : {
+      "get" : {
+        "summary" : "List catalog entries for an account, optionally filtered by selection state",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "query",
+          "name" : "selected",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "items" : [ {
+                    "shortcode" : "Cabc123XYZ",
+                    "mediaType" : "IMAGE",
+                    "caption" : "An example caption",
+                    "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+                    "timestamp" : "2024-01-01T00:00:00Z",
+                    "selected" : false,
+                    "notDigestibleReason" : "copyright",
+                    "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp"
+                  } ],
+                  "count" : 1
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/AdminCatalogResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "getApiV1AdminAccounts_accountId_Catalog",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/catalog/selections" : {
+      "patch" : {
+        "summary" : "Bulk-select or deselect catalog entries by shortcode",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "example" : {
+                "select" : [ "Cabc123XYZ" ],
+                "deselect" : [ "Cdef456UVW" ]
+              },
+              "schema" : {
+                "$ref" : "#/components/schemas/SelectionUpdateRequest",
+                "example" : null,
+                "format" : null
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "selected" : [ "Cabc123XYZ" ],
+                  "deselected" : [ "Cdef456UVW" ],
+                  "notFound" : [ "Cghi789RST" ]
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/SelectionUpdateResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "patchApiV1AdminAccounts_accountId_CatalogSelections",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    }
+  },
+  "webhooks" : null,
+  "components" : {
+    "schemas" : {
+      "GalleryResponse" : {
+        "properties" : {
+          "items" : {
+            "items" : {
+              "$ref" : "#/components/schemas/GalleryItemResponse"
+            },
+            "example" : [ {
+              "id" : "01234567-89ab-cdef-0123-456789abcdef",
+              "mediaType" : "IMAGE",
+              "caption" : "An example caption",
+              "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+              "timestamp" : "2024-01-01T00:00:00Z",
+              "mediaItems" : [ {
+                "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+                "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+                "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+                "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+              } ],
+              "viewCount" : 0,
+              "clickCount" : 0
+            } ],
+            "format" : null,
+            "type" : "array"
+          },
+          "count" : {
+            "example" : 1,
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "example" : {
+          "items" : [ {
+            "id" : "01234567-89ab-cdef-0123-456789abcdef",
+            "mediaType" : "IMAGE",
+            "caption" : "An example caption",
+            "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+            "timestamp" : "2024-01-01T00:00:00Z",
+            "mediaItems" : [ {
+              "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+              "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+              "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+              "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+            } ],
+            "viewCount" : 0,
+            "clickCount" : 0
+          } ],
+          "count" : 1
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "count", "items" ]
+      },
+      "GalleryItemResponse" : {
+        "properties" : {
+          "id" : {
+            "example" : "01234567-89ab-cdef-0123-456789abcdef",
+            "format" : null,
+            "type" : "string"
+          },
+          "mediaType" : {
+            "example" : "IMAGE",
+            "format" : null,
+            "type" : "string"
+          },
+          "caption" : {
+            "example" : "An example caption",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "permalink" : {
+            "example" : "https://www.instagram.com/p/Cabc123XYZ/",
+            "format" : null,
+            "type" : "string"
+          },
+          "timestamp" : {
+            "example" : "2024-01-01T00:00:00Z",
+            "format" : null,
+            "type" : "string"
+          },
+          "mediaItems" : {
+            "items" : {
+              "$ref" : "#/components/schemas/GalleryMediaItemResponse"
+            },
+            "example" : [ {
+              "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+              "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+              "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+              "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+            } ],
+            "format" : null,
+            "type" : "array"
+          },
+          "viewCount" : {
+            "example" : 0,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "clickCount" : {
+            "example" : 0,
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "example" : {
+          "id" : "01234567-89ab-cdef-0123-456789abcdef",
+          "mediaType" : "IMAGE",
+          "caption" : "An example caption",
+          "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+          "timestamp" : "2024-01-01T00:00:00Z",
+          "mediaItems" : [ {
+            "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+            "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+            "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+            "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+          } ],
+          "viewCount" : 0,
+          "clickCount" : 0
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "clickCount", "id", "mediaItems", "mediaType", "permalink", "timestamp", "viewCount" ]
+      },
+      "GalleryMediaItemResponse" : {
+        "properties" : {
+          "smallUrl" : {
+            "example" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+            "format" : null,
+            "type" : "string"
+          },
+          "largeUrl" : {
+            "example" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+            "format" : null,
+            "type" : "string"
+          },
+          "videoUrl" : {
+            "example" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "mediaUrlExpiresAt" : {
+            "example" : "2024-01-01T06:00:00Z",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+          "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+          "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+          "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "largeUrl", "mediaUrlExpiresAt", "smallUrl" ]
+      },
+      "TrackResponse" : {
+        "properties" : {
+          "status" : {
+            "example" : "ok",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "status" : "ok"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "status" ]
+      },
+      "TrackRequest" : {
+        "properties" : {
+          "id" : {
+            "example" : "id",
+            "format" : null,
+            "type" : "string"
+          },
+          "event" : {
+            "example" : "view",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "id" : "id",
+          "event" : "view"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "event", "id" ]
+      },
+      "AdminCatalogResponse" : {
+        "properties" : {
+          "items" : {
+            "items" : {
+              "$ref" : "#/components/schemas/AdminCatalogItemResponse"
+            },
+            "example" : [ {
+              "shortcode" : "Cabc123XYZ",
+              "mediaType" : "IMAGE",
+              "caption" : "An example caption",
+              "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+              "timestamp" : "2024-01-01T00:00:00Z",
+              "selected" : false,
+              "notDigestibleReason" : "copyright",
+              "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp"
+            } ],
+            "format" : null,
+            "type" : "array"
+          },
+          "count" : {
+            "example" : 1,
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "example" : {
+          "items" : [ {
+            "shortcode" : "Cabc123XYZ",
+            "mediaType" : "IMAGE",
+            "caption" : "An example caption",
+            "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+            "timestamp" : "2024-01-01T00:00:00Z",
+            "selected" : false,
+            "notDigestibleReason" : "copyright",
+            "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp"
+          } ],
+          "count" : 1
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "count", "items" ]
+      },
+      "AdminCatalogItemResponse" : {
+        "properties" : {
+          "shortcode" : {
+            "example" : "Cabc123XYZ",
+            "format" : null,
+            "type" : "string"
+          },
+          "mediaType" : {
+            "example" : "IMAGE",
+            "format" : null,
+            "type" : "string"
+          },
+          "caption" : {
+            "example" : "An example caption",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "permalink" : {
+            "example" : "https://www.instagram.com/p/Cabc123XYZ/",
+            "format" : null,
+            "type" : "string"
+          },
+          "timestamp" : {
+            "example" : "2024-01-01T00:00:00Z",
+            "format" : null,
+            "type" : "string"
+          },
+          "selected" : {
+            "example" : false,
+            "format" : null,
+            "type" : "boolean"
+          },
+          "notDigestibleReason" : {
+            "example" : "copyright",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "thumbnailUrl" : {
+            "example" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          }
+        },
+        "example" : {
+          "shortcode" : "Cabc123XYZ",
+          "mediaType" : "IMAGE",
+          "caption" : "An example caption",
+          "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+          "timestamp" : "2024-01-01T00:00:00Z",
+          "selected" : false,
+          "notDigestibleReason" : "copyright",
+          "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "mediaType", "permalink", "selected", "shortcode", "timestamp" ]
+      },
+      "SelectionUpdateResponse" : {
+        "properties" : {
+          "selected" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cabc123XYZ" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "deselected" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cdef456UVW" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "notFound" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cghi789RST" ],
+            "format" : null,
+            "type" : "array"
+          }
+        },
+        "example" : {
+          "selected" : [ "Cabc123XYZ" ],
+          "deselected" : [ "Cdef456UVW" ],
+          "notFound" : [ "Cghi789RST" ]
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "deselected", "notFound", "selected" ]
+      },
+      "SelectionUpdateRequest" : {
+        "properties" : {
+          "select" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cabc123XYZ" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "deselect" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cdef456UVW" ],
+            "format" : null,
+            "type" : "array"
+          }
+        },
+        "example" : {
+          "select" : [ "Cabc123XYZ" ],
+          "deselect" : [ "Cdef456UVW" ]
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "deselect", "select" ]
+      }
+    },
+    "securitySchemes" : {
+      "galleryTrackingBearer" : {
+        "scheme" : "bearer",
+        "type" : "http"
+      },
+      "accountAdminBearer" : {
+        "scheme" : "bearer",
+        "type" : "http"
+      }
+    }
+  },
+  "openapi" : "3.2.0",
+  "jsonSchemaDialect" : "https://spec.openapis.org/oas/3.2/dialect/2025-09-17"
+}
