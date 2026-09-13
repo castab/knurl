@@ -461,6 +461,87 @@ class InstagramPostRepository(
         }
 
     /**
+     * Deletes the catalog row and, if one was ever downloaded, the post (and its media) for every
+     * media id in [vanishedMediaIds] - media [knurl.ingestion.pipeline.SyncPipeline] has determined
+     * Instagram's own feed no longer returns for this account, having just finished a complete,
+     * successful pagination sweep. Returns an [EvictionCandidate] per post that existed, so the
+     * caller can delete its S3 objects the same way retention eviction does.
+     *
+     * Unconditional, unlike [deleteIfNotSelected]: there is no reselect race to protect against
+     * here, because reselecting an item Instagram itself no longer serves cannot bring it back - the
+     * next sync would simply fail to find it in the feed again. `selected` and `is_pinned` are both
+     * overridden for the same reason: they express a preference for keeping content Instagram still
+     * has, never a claim that Instagram is wrong about what it has.
+     *
+     * Both tables are deleted from inside one transaction on purpose, even though
+     * `instagram_media_catalog` is normally [CatalogRepository]'s table to touch. Splitting this
+     * across two separate calls would let a crash in between leave a postless catalog row cleared
+     * but a catalog-less post row behind - exactly the state [countOrphanedPosts] exists to detect,
+     * but that nothing would then be able to heal automatically.
+     */
+    fun deleteVanished(
+        accountId: String,
+        vanishedMediaIds: Set<String>,
+    ): List<EvictionCandidate> {
+        if (vanishedMediaIds.isEmpty()) return emptyList()
+
+        return jdbi.inTransaction<List<EvictionCandidate>, Exception> { handle ->
+            val postIds =
+                handle
+                    .createQuery(
+                        """
+                        SELECT id FROM instagram_posts
+                        WHERE instagram_account_id = :accountId AND instagram_media_id = ANY(:mediaIds)
+                        """.trimIndent(),
+                    ).bind("accountId", accountId)
+                    .bindArray("mediaIds", String::class.java, vanishedMediaIds)
+                    .mapTo<UuidRow>()
+                    .list()
+                    .map { it.id }
+
+            val pathsByPost =
+                if (postIds.isEmpty()) {
+                    emptyMap()
+                } else {
+                    handle
+                        .createQuery(
+                            "SELECT post_id, small_path, large_path, video_path FROM instagram_post_media WHERE post_id IN (<ids>)",
+                        ).bindList("ids", postIds)
+                        .mapTo<MediaPathsRow>()
+                        .list()
+                        .groupBy { it.postId }
+                }
+
+            handle
+                .createUpdate(
+                    """
+                    DELETE FROM instagram_posts
+                    WHERE instagram_account_id = :accountId AND instagram_media_id = ANY(:mediaIds)
+                    """.trimIndent(),
+                ).bind("accountId", accountId)
+                .bindArray("mediaIds", String::class.java, vanishedMediaIds)
+                .execute()
+
+            handle
+                .createUpdate(
+                    """
+                    DELETE FROM instagram_media_catalog
+                    WHERE instagram_account_id = :accountId AND instagram_media_id = ANY(:mediaIds)
+                    """.trimIndent(),
+                ).bind("accountId", accountId)
+                .bindArray("mediaIds", String::class.java, vanishedMediaIds)
+                .execute()
+
+            postIds.map { id ->
+                EvictionCandidate(
+                    id = id,
+                    mediaPaths = pathsByPost[id].orEmpty().flatMap { listOfNotNull(it.smallPath, it.largePath, it.videoPath) },
+                )
+            }
+        }
+    }
+
+    /**
      * Posts for this account with no `instagram_media_catalog` row at all. Such a post can never be
      * shown (the gallery filters on `selected`) nor reaped (retention joins the catalog), so it
      * would occupy bucket space forever while being invisible. It should be unreachable; this
@@ -640,6 +721,21 @@ class CatalogRepository(
                 .execute()
         }
     }
+
+    /**
+     * Every media id currently in this account's catalog, selected or not. Used by the ingestion
+     * pipeline to detect which catalog entries Instagram's own feed no longer returned this cycle -
+     * see [knurl.ingestion.pipeline.SyncPipeline]'s vanished-media removal - by diffing this against
+     * what the cycle's complete pagination actually found.
+     */
+    fun allMediaIds(accountId: String): Set<String> =
+        jdbi.withHandle<Set<String>, Exception> { handle ->
+            handle
+                .createQuery("SELECT instagram_media_id FROM instagram_media_catalog WHERE instagram_account_id = :accountId")
+                .bind("accountId", accountId)
+                .mapTo<String>()
+                .toSet()
+        }
 
     /** Used by the ingestion pipeline to decide which catalog items to download/store as posts. */
     fun selectedMediaIds(accountId: String): Set<String> =

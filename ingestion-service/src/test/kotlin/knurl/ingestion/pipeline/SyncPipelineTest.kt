@@ -258,4 +258,24 @@ class SyncPipelineTest :
             shouldDownload("media-1", selectedIds = emptySet(), existingIds = emptySet()) shouldBe false
             shouldDownload("media-1", selectedIds = emptySet(), existingIds = setOf("media-1")) shouldBe false
         }
+        test("vanished-media guard: at or below the floor, any fraction proceeds") {
+            shouldSkipVanishedRemoval(vanishedCount = 5, existingCatalogCount = 5, maxPercent = 50) shouldBe false
+            shouldSkipVanishedRemoval(vanishedCount = 3, existingCatalogCount = 3, maxPercent = 50) shouldBe false
+        }
+
+        test("vanished-media guard: above the floor, a small fraction proceeds") {
+            shouldSkipVanishedRemoval(vanishedCount = 6, existingCatalogCount = 200, maxPercent = 50) shouldBe false
+        }
+
+        test("vanished-media guard: above the floor, a fraction over the configured percent is refused") {
+            shouldSkipVanishedRemoval(vanishedCount = 51, existingCatalogCount = 100, maxPercent = 50) shouldBe true
+        }
+
+        test("vanished-media guard: exactly at the configured percent still proceeds") {
+            shouldSkipVanishedRemoval(vanishedCount = 50, existingCatalogCount = 100, maxPercent = 50) shouldBe false
+        }
+
+        test("vanished-media guard: an empty existing catalog never trips the guard") {
+            shouldSkipVanishedRemoval(vanishedCount = 10, existingCatalogCount = 0, maxPercent = 50) shouldBe false
+        }
     })
