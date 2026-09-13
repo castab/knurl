@@ -8,6 +8,7 @@ import knurl.ingestion.client.MediaChildren
 import knurl.ingestion.client.MediaItem
 import java.time.Instant
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 private fun testItem(
     mediaType: String,
@@ -222,5 +223,39 @@ class SyncPipelineTest :
                 )
 
             thumbnailSourceUrl(item) shouldBe "https://cdn.example/first-child-thumb.jpg"
+        }
+        test("retention: a deselection older than the retention window is past the cutoff") {
+            val now = Instant.parse("2024-06-01T00:00:00Z")
+            val cutoff = retentionCutoff(now, retentionDays = 30)
+
+            now.minus(31, ChronoUnit.DAYS).isBefore(cutoff) shouldBe true
+        }
+
+        test("retention: a deselection inside the retention window is not yet past the cutoff") {
+            val now = Instant.parse("2024-06-01T00:00:00Z")
+            val cutoff = retentionCutoff(now, retentionDays = 30)
+
+            now.minus(29, ChronoUnit.DAYS).isBefore(cutoff) shouldBe false
+        }
+
+        test("retention: a zero-day retention makes a deselection deletable immediately") {
+            val now = Instant.parse("2024-06-01T00:00:00Z")
+
+            retentionCutoff(now, retentionDays = 0) shouldBe now
+        }
+
+        // The mechanism behind "reselecting inside the grace period costs no re-download": the post
+        // row survives the whole window, so the item stays in existingIds and this gate stays shut.
+        test("download gate: a reselected item that still has its media is not re-downloaded") {
+            shouldDownload("media-1", selectedIds = setOf("media-1"), existingIds = setOf("media-1")) shouldBe false
+        }
+
+        test("download gate: a selected item whose media was already deleted is downloaded again") {
+            shouldDownload("media-1", selectedIds = setOf("media-1"), existingIds = emptySet()) shouldBe true
+        }
+
+        test("download gate: a deselected item is never downloaded, media present or not") {
+            shouldDownload("media-1", selectedIds = emptySet(), existingIds = emptySet()) shouldBe false
+            shouldDownload("media-1", selectedIds = emptySet(), existingIds = setOf("media-1")) shouldBe false
         }
     })

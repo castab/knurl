@@ -29,6 +29,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 /**
  * Matches `instagram.com/p/{shortcode}/` and `instagram.com/reel/{shortcode}/`, with or without
@@ -98,9 +99,36 @@ fun notDigestibleReason(item: MediaItem): String? {
     }
 }
 
+/**
+ * The instant before which a deselection is old enough for its media to be deleted.
+ *
+ * Computed here rather than as a SQL `INTERVAL` so the window is unit-testable without a database -
+ * the same reason the other decision helpers in this file are pure top-level functions.
+ */
+fun retentionCutoff(
+    now: Instant,
+    retentionDays: Int,
+): Instant = now.minus(retentionDays.toLong(), ChronoUnit.DAYS)
+
+/**
+ * Whether a catalog item's media should be downloaded this cycle: it must be admin-selected, and
+ * must not already have been downloaded.
+ *
+ * The second half is what makes reselecting an item inside its retention grace period free. The
+ * post row survives that whole window, so the item is still in [existingIds] and no re-download
+ * happens - it simply reappears in the gallery. Only once retention has actually deleted the row
+ * does a reselect fetch the media again. Pure/no I/O so it's unit-testable on its own, and factored
+ * out precisely because that behaviour is emergent from this condition rather than stated anywhere
+ * explicitly - inlined, it would be easy to "simplify" away.
+ */
+fun shouldDownload(
+    mediaId: String,
+    selectedIds: Set<String>,
+    existingIds: Set<String>,
+): Boolean = mediaId in selectedIds && mediaId !in existingIds
+
 private const val TOKEN_REFRESH_THRESHOLD_HOURS = 24L
-private const val DEFAULT_MAX_RECENT_COUNT = 100
-private const val DEFAULT_MAX_VIEW_COUNT = 50
+private const val DEFAULT_RETENTION_DAYS = 30
 private const val EVICTION_CONCURRENCY = 2
 private const val THUMBNAIL_FETCH_CONCURRENCY = 4
 
@@ -131,7 +159,8 @@ fun thumbnailSourceUrl(item: MediaItem): String? {
  * Orchestrates one ingestion cycle: refresh the Graph API token if it's close to expiring, sync
  * the account's entire media feed into the catalog (metadata only) while additionally downloading
  * and storing any catalog item that's both admin-`selected` and not yet in `instagram_posts`, then
- * run the sliding-window retention eviction.
+ * run the retention sweep that deletes the media of items deselected longer ago than
+ * `retention_days` (or explicitly purge-requested by an admin).
  *
  * Every paginated feed item is upserted into `instagram_media_catalog` unconditionally, regardless
  * of selection state - this is what powers the admin browse-and-select API in presentation-service.
@@ -264,7 +293,7 @@ class SyncPipeline(
             ),
         )
 
-        if (item.id in selectedIds && item.id !in existingIds) {
+        if (shouldDownload(item.id, selectedIds, existingIds)) {
             runCatching { processAndStore(item) }
                 .onFailure { log.error("Failed to process media ${item.id}", it) }
         }
@@ -353,14 +382,28 @@ class SyncPipeline(
     }
 
     /**
-     * Deletion order is always S3 first, DB row second: a mid-failure then leaves only a harmless
-     * orphaned S3 object (the row remains, so this candidate is simply retried next cycle) rather
-     * than an unrecoverable dangling DB reference to already-deleted objects.
+     * Deletes the media of posts whose retention clock has run out - deselected longer ago than
+     * `retention_days`, or explicitly purge-requested by an admin.
+     *
+     * Deletion order is DB row first, S3 objects second. A mid-failure then leaves an orphaned S3
+     * object, which [knurl.ingestion.pipeline.OrphanSweeper] exists precisely to reap. (The previous
+     * S3-first ordering had this exactly backwards: deleting objects first is what leaves a surviving
+     * row pointing at media that is already gone.)
      */
     private suspend fun runEviction() {
-        val maxRecentCount = syncConfigurationRepository.getInt("max_recent_count", DEFAULT_MAX_RECENT_COUNT)
-        val maxViewCount = syncConfigurationRepository.getInt("max_view_count", DEFAULT_MAX_VIEW_COUNT)
-        val candidates = postRepository.findEvictionCandidates(targetUserId, maxRecentCount, maxViewCount)
+        val retentionDays = syncConfigurationRepository.getInt("retention_days", DEFAULT_RETENTION_DAYS)
+        val cutoff = retentionCutoff(Instant.now(), retentionDays)
+
+        val orphanedPosts = postRepository.countOrphanedPosts(targetUserId)
+        if (orphanedPosts > 0) {
+            log.warn(
+                "$orphanedPosts post(s) for $targetUserId have no catalog row: they can never be shown " +
+                    "(the gallery filters on `selected`) nor reaped (retention joins the catalog), so their " +
+                    "S3 objects are held indefinitely. This should be unreachable - investigate.",
+            )
+        }
+
+        val candidates = postRepository.findEvictionCandidates(targetUserId, cutoff)
         if (candidates.isEmpty()) return
 
         coroutineScope {
@@ -378,14 +421,19 @@ class SyncPipeline(
     }
 
     private fun evictOne(candidate: EvictionCandidate) {
-        val objectIds = candidate.mediaPaths.map { ObjectIdentifier.builder().key(it).build() }
+        // The row delete re-checks selection, so a reselect landing between findEvictionCandidates
+        // and here wins: 0 rows means the item is live again and its objects must survive. Bailing
+        // out before touching S3 is the whole reason this ordering is row-first.
+        if (postRepository.deleteIfNotSelected(candidate.id) == 0) {
+            log.info("Eviction candidate ${candidate.id} was reselected mid-cycle; keeping its media")
+            return
+        }
 
         // A post with no media rows has nothing to delete from S3, and DeleteObjects rejects an empty
-        // object list outright (MalformedXML) - which previously aborted this candidate before the row
-        // delete and left it retrying forever.
+        // object list outright (MalformedXML).
+        val objectIds = candidate.mediaPaths.map { ObjectIdentifier.builder().key(it).build() }
         if (objectIds.isEmpty()) {
-            log.warn("Eviction candidate ${candidate.id} has no media paths; deleting the row only")
-            postRepository.deleteById(candidate.id)
+            log.warn("Eviction candidate ${candidate.id} had no media paths; deleted the row only")
             return
         }
 
@@ -399,6 +447,5 @@ class SyncPipeline(
             )
 
         check(deleteResponse.errors().isEmpty()) { "S3 delete errors for ${candidate.id}: ${deleteResponse.errors()}" }
-        postRepository.deleteById(candidate.id)
     }
 }

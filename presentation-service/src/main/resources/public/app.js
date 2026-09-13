@@ -454,6 +454,9 @@
   els.catalogGrid.addEventListener("click", (event) => {
     if (event.target.closest("a")) return;
     if (event.target.matches('input[type="checkbox"]')) return;
+    // The purge button lives inside the card and has its own handler on this same element, so
+    // stopPropagation there would not stop this one - it has to opt out explicitly.
+    if (event.target.closest("button[data-purge-shortcode]")) return;
     const card = event.target.closest(".card[data-card-shortcode]");
     if (!card) return;
     const checkbox = card.querySelector("input[data-shortcode]");
@@ -461,6 +464,23 @@
     checkbox.checked = !checkbox.checked;
     checkbox.dispatchEvent(new Event("change"));
   });
+
+  // Mirrors the server's retention default. Only ever used to render an approximate countdown; the
+  // server alone decides when media actually goes, so being out of date here is cosmetic.
+  const DEFAULT_RETENTION_DAYS = 30;
+
+  // Shows that a deselected item's media is on a deletion clock, and that the decision is still
+  // reversible until it runs out - reselecting inside the window restores it with no re-download.
+  function lifecycleBadge(item) {
+    if (item.purgeRequestedAt) {
+      return '<span class="badge badge-warning">purge pending</span>';
+    }
+    if (!item.deselectedAt) return "";
+    const deletesAt = new Date(item.deselectedAt).getTime() + DEFAULT_RETENTION_DAYS * 86400000;
+    const daysLeft = Math.ceil((deletesAt - Date.now()) / 86400000);
+    const label = daysLeft > 0 ? `deletes in ${daysLeft}d` : "deletes next cycle";
+    return `<span class="badge badge-warning">${escapeHtml(label)}</span>`;
+  }
 
   function catalogCardHtml(item) {
     const thumb = item.thumbnailUrl
@@ -472,6 +492,12 @@
     const warning = item.notDigestibleReason
       ? `<span class="badge badge-warning">not digestible: ${escapeHtml(item.notDigestibleReason)}</span>`
       : "";
+    const lifecycle = lifecycleBadge(item);
+    // Only an item with downloaded media has anything to purge, and only the server knows for sure.
+    // A deselected item is still worth offering it for, since its media survives the grace period.
+    const purgeAction = item.selected || item.deselectedAt
+      ? `<button type="button" class="link-button danger" data-purge-shortcode="${escapeHtml(item.shortcode)}">Delete now</button>`
+      : "";
     const cardClasses = ["card"];
     if (!item.notDigestibleReason) cardClasses.push("selectable");
     if (isChecked) cardClasses.push("selected");
@@ -481,6 +507,7 @@
         <div class="card-body">
           <span class="badge">${escapeHtml(item.mediaType)}</span>
           ${warning}
+          ${lifecycle}
           <div class="card-caption">${escapeHtml(item.caption ?? "")}</div>
           <div class="card-meta">
             <span>${escapeHtml(item.shortcode)}</span>
@@ -493,6 +520,7 @@
             <input type="checkbox" data-shortcode="${escapeHtml(item.shortcode)}" ${checked} ${disabled} />
             Selected
           </label>
+          ${purgeAction}
         </div>
       </div>
     `;
@@ -563,6 +591,42 @@
     } catch (err) {
       showError(els.catalogError, err.message);
       updatePendingSummary();
+    }
+  });
+
+  // Delegated, because cards are re-rendered wholesale on every catalog load.
+  els.catalogGrid.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-purge-shortcode]");
+    if (!button) return;
+
+    const shortcode = button.dataset.purgeShortcode;
+    const confirmed = window.confirm(
+      `Delete the downloaded media for ${shortcode}?\n\n` +
+        "It leaves the gallery immediately and its files are deleted on the next ingestion cycle. " +
+        "The catalog entry stays, so you can select it again later to download it afresh.",
+    );
+    if (!confirmed) return;
+
+    showError(els.catalogError, "");
+    button.disabled = true;
+    els.catalogStatus.textContent = `Deleting ${shortcode}...`;
+    try {
+      const result = await apiFetch(
+        `/api/v1/admin/accounts/${encodeURIComponent(accountId())}/catalog/media`,
+        { method: "DELETE", token: adminToken(), body: { shortcodes: [shortcode] } },
+      );
+      const status = result.results[0]?.status ?? "UNKNOWN";
+      els.catalogStatus.textContent =
+        status === "ACCEPTED"
+          ? `${shortcode}: media will be deleted on the next ingestion cycle`
+          : `${shortcode}: ${status}`;
+      // The purge deselects server-side, so any pending state for this card is now stale.
+      baseline = new Map();
+      pending = new Map();
+      await loadCatalog(catalogSelfLink ?? undefined);
+    } catch (err) {
+      button.disabled = false;
+      showError(els.catalogError, err.message);
     }
   });
 

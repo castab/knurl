@@ -87,12 +87,36 @@ CREATE TABLE instagram_media_catalog (
     -- thumbnail object per catalog row, fetched regardless of `selected`, so an admin can browse
     -- real images before deciding what's worth a full download.
     thumbnail_path TEXT,
+    -- NULL while the item is selected, or was never selected. Stamped when an admin deselects,
+    -- which starts the retention grace period: the `instagram_posts` row and its S3 objects survive
+    -- until `deselected_at + retention_days` (see sync_configurations below), so a reselect inside
+    -- that window costs nothing - the media is still in the bucket and `existingMediaIds` already
+    -- covers it, so ingestion skips the download. Cleared back to NULL on reselect, which is what
+    -- makes a later deselection start a *fresh* countdown rather than resuming the old one.
+    deselected_at TIMESTAMP WITH TIME ZONE,
+    -- NULL normally. Stamped by DELETE /api/v1/admin/accounts/{id}/catalog/media to mean "skip the
+    -- grace period entirely, delete this item's downloaded media on the next ingestion cycle".
+    -- A separate column rather than a backdated `deselected_at` sentinel: a retention date of 1970
+    -- is a lie the admin UI would have to render, and arming a purge must not silently depend on
+    -- whatever `retention_days` happens to be at the moment of the request. Cleared on reselect.
+    purge_requested_at TIMESTAMP WITH TIME ZONE,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 4. Ingestion & Scope Constraints Key-Value Registry
--- Global, not per-account: every account's retention eviction uses the same numeric limits,
+-- Global, not per-account: every account's retention and sweep behaviour uses the same values,
 -- applied independently within each account's own post pool (see idx_posts_account_timestamp).
+-- Runtime-tunable without a redeploy, which is the whole point of keeping these here rather than
+-- in the Hoplite config - notably `orphan_sweep_dry_run`, which an operator wants to toggle
+-- against a live deployment before arming a destructive sweep.
+--
+--   retention_days              (default 30)    grace period between deselection and deletion
+--   orphan_sweep_interval_hours (default 24)    minimum gap between full bucket sweeps
+--   orphan_grace_minutes        (default 60)    an object younger than this is never an orphan
+--   orphan_sweep_max_deletes    (default 1000)  deletion cap per sweep
+--   orphan_sweep_dry_run        (default false) log what would be deleted, delete nothing
+--   last_orphan_sweep_at                        epoch seconds; written by the sweep claim, not an
+--                                               operator knob (see SyncConfigurationRepository.claimIfElapsed)
 CREATE TABLE sync_configurations (
     key VARCHAR(50) PRIMARY KEY,
     value TEXT NOT NULL
@@ -109,8 +133,12 @@ CREATE TABLE sync_configurations (
 -- selectedMediaIds, mediaIdsNeedingThumbnail), so no separate single-column account index is kept.
 CREATE INDEX idx_posts_account_timestamp ON instagram_posts (instagram_account_id, timestamp DESC, id);
 CREATE INDEX idx_posts_account_view_count ON instagram_posts (instagram_account_id, view_count DESC, id);
-CREATE INDEX idx_posts_pinned_status ON instagram_posts (is_pinned);
 CREATE INDEX idx_post_media_post_id ON instagram_post_media (post_id);
 CREATE INDEX idx_catalog_selected ON instagram_media_catalog (selected);
+-- Partial indexes: both columns are NULL for the overwhelming majority of rows (an item is
+-- normally either selected or was never selected), so these stay tiny while still letting the
+-- retention sweep find the handful of rows on a deletion clock without a full catalog scan.
+CREATE INDEX idx_catalog_deselected_at ON instagram_media_catalog (deselected_at) WHERE deselected_at IS NOT NULL;
+CREATE INDEX idx_catalog_purge_requested ON instagram_media_catalog (purge_requested_at) WHERE purge_requested_at IS NOT NULL;
 CREATE INDEX idx_catalog_account_timestamp ON instagram_media_catalog (instagram_account_id, timestamp DESC, instagram_media_id);
 CREATE INDEX idx_catalog_needs_thumbnail ON instagram_media_catalog (instagram_account_id) WHERE thumbnail_path IS NULL;
