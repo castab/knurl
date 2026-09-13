@@ -12,9 +12,8 @@ import javax.sql.DataSource
 /**
  * Connection pool, migration, and JDBI bootstrap shared by both services.
  *
- * Pool is intentionally capped at 2 connections (see AGENTS.md) to fit the 128MB
- * heap / low-memory deployment target - do not raise these without revisiting the
- * memory budget.
+ * Pool is intentionally capped at 2 connections (see AGENTS.md) to preserve the low-memory
+ * deployment footprint - do not raise these without revisiting the relevant memory budget.
  */
 object DatabaseConfig {
     private const val DEFAULT_POSTGRES_PORT = 5432

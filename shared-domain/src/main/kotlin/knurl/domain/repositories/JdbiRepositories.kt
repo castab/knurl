@@ -292,8 +292,40 @@ class InstagramPostRepository(
             val batch =
                 handle.prepareBatch(
                     """
-                    INSERT INTO instagram_post_media (post_id, position, media_type, small_path, large_path, video_path)
-                    VALUES (:postId, :position, :mediaType, :smallPath, :largePath, :videoPath)
+                    INSERT INTO instagram_post_media (
+                        post_id,
+                        position,
+                        media_type,
+                        small_path,
+                        small_file_size_bytes,
+                        small_width,
+                        small_height,
+                        large_path,
+                        large_file_size_bytes,
+                        large_width,
+                        large_height,
+                        video_path,
+                        video_file_size_bytes,
+                        video_width,
+                        video_height
+                    )
+                    VALUES (
+                        :postId,
+                        :position,
+                        :mediaType,
+                        :smallPath,
+                        :smallFileSizeBytes,
+                        :smallWidth,
+                        :smallHeight,
+                        :largePath,
+                        :largeFileSizeBytes,
+                        :largeWidth,
+                        :largeHeight,
+                        :videoPath,
+                        :videoFileSizeBytes,
+                        :videoWidth,
+                        :videoHeight
+                    )
                     """.trimIndent(),
                 )
             post.mediaItems.forEach { item -> batch.bind("postId", postId).bindKotlin(item).add() }

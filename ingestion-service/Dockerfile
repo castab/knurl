@@ -22,11 +22,17 @@ COPY ingestion-service ingestion-service
 RUN sed -i 's/\r$//' gradlew && sh gradlew --no-daemon :ingestion-service:installDist -x test
 
 FROM eclipse-temurin:25-jre AS runtime
-RUN useradd --system --create-home --home-dir /app --shell /usr/sbin/nologin knurl
+# ffprobe derives the uploaded video dimensions from the actual container stream without requiring
+# the JVM to decode or buffer the full asset.
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --create-home --home-dir /app --shell /usr/sbin/nologin knurl
 WORKDIR /app
 COPY --from=build --chown=knurl:knurl /workspace/ingestion-service/build/install/ingestion-service ./
 USER knurl
 
 # No HTTP listener - see Main.kt's architectural-boundary note. Configuration comes entirely from
 # env vars (DATABASE_URL, S3_*, INSTAGRAM_*, ADMIN_TOKEN, ...); see README.md's env var reference.
+ENV JAVA_TOOL_OPTIONS="-Xmx512m"
 ENTRYPOINT ["./bin/ingestion-service"]

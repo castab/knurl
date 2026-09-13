@@ -26,8 +26,17 @@ import kotlin.uuid.Uuid
 data class GalleryMediaItemResponse(
     val mediaType: String,
     val smallUrl: String,
+    val smallFileSizeBytes: Long,
+    val smallWidth: Int,
+    val smallHeight: Int,
     val largeUrl: String,
+    val largeFileSizeBytes: Long,
+    val largeWidth: Int,
+    val largeHeight: Int,
     val videoUrl: String?,
+    val videoFileSizeBytes: Long?,
+    val videoWidth: Int?,
+    val videoHeight: Int?,
     val mediaUrlExpiresAt: String,
 )
 
@@ -87,8 +96,17 @@ private val EXAMPLE_GALLERY_ITEM =
                 GalleryMediaItemResponse(
                     mediaType = "IMAGE",
                     smallUrl = "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+                    smallFileSizeBytes = 18_432,
+                    smallWidth = 400,
+                    smallHeight = 400,
                     largeUrl = "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+                    largeFileSizeBytes = 84_736,
+                    largeWidth = 800,
+                    largeHeight = 600,
                     videoUrl = "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+                    videoFileSizeBytes = 1_048_576,
+                    videoWidth = 1_920,
+                    videoHeight = 1_080,
                     mediaUrlExpiresAt = "2024-01-01T06:00:00Z",
                 ),
             ),
@@ -101,8 +119,17 @@ private fun PostMediaItem.toResponse(presigner: Presigner): GalleryMediaItemResp
     return GalleryMediaItemResponse(
         mediaType = mediaType,
         smallUrl = small.url,
+        smallFileSizeBytes = smallFileSizeBytes,
+        smallWidth = smallWidth,
+        smallHeight = smallHeight,
         largeUrl = presigner.presignGet(largePath).url,
+        largeFileSizeBytes = largeFileSizeBytes,
+        largeWidth = largeWidth,
+        largeHeight = largeHeight,
         videoUrl = videoPath?.let { presigner.presignGet(it).url },
+        videoFileSizeBytes = videoFileSizeBytes,
+        videoWidth = videoWidth,
+        videoHeight = videoHeight,
         mediaUrlExpiresAt = small.expiresAt.toString(),
     )
 }

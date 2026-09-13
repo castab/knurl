@@ -1,6 +1,7 @@
 package knurl.ingestion.processor
 
 import com.sksamuel.scrimage.ImmutableImage
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 
@@ -54,5 +55,14 @@ class MediaProcessorTest :
                 square.width shouldBe SMALL
                 square.height shouldBe SMALL
             }
+        }
+
+        test("parseVideoDimensions reads ffprobe's width,height output") {
+            parseVideoDimensions("1920,1080\n") shouldBe VideoDimensions(1920, 1080)
+        }
+
+        test("parseVideoDimensions rejects missing or invalid dimensions") {
+            shouldThrow<IllegalArgumentException> { parseVideoDimensions("0,1080\n") }
+            shouldThrow<IllegalArgumentException> { parseVideoDimensions("not dimensions\n") }
         }
     })

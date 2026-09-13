@@ -56,8 +56,22 @@ CREATE TABLE instagram_post_media (
     position INT NOT NULL,
     media_type VARCHAR(20) NOT NULL,
     small_path TEXT NOT NULL,
+    small_file_size_bytes BIGINT NOT NULL CHECK (small_file_size_bytes >= 0),
+    small_width INT NOT NULL CHECK (small_width > 0),
+    small_height INT NOT NULL CHECK (small_height > 0),
     large_path TEXT NOT NULL,
+    large_file_size_bytes BIGINT NOT NULL CHECK (large_file_size_bytes >= 0),
+    large_width INT NOT NULL CHECK (large_width > 0),
+    large_height INT NOT NULL CHECK (large_height > 0),
     video_path TEXT,
+    video_file_size_bytes BIGINT CHECK (video_file_size_bytes >= 0),
+    video_width INT CHECK (video_width > 0),
+    video_height INT CHECK (video_height > 0),
+    CHECK (
+        (video_path IS NULL AND video_file_size_bytes IS NULL AND video_width IS NULL AND video_height IS NULL)
+        OR
+        (video_path IS NOT NULL AND video_file_size_bytes IS NOT NULL AND video_width IS NOT NULL AND video_height IS NOT NULL)
+    ),
     UNIQUE (post_id, position)
 );
 

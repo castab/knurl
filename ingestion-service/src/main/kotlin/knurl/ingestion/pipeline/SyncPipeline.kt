@@ -335,37 +335,63 @@ class SyncPipeline(
             children.mapIndexed { position, child ->
                 val keyPrefix = "posts/${item.id}/$position"
 
-                val (smallPath, largePath, videoPath) =
-                    if (child.mediaType == "VIDEO") {
-                        val videoKey = "$keyPrefix/original"
+                if (child.mediaType == "VIDEO") {
+                    val videoKey = "$keyPrefix/original"
+                    val video =
                         mediaProcessor.processVideoPassthrough(
-                            requireNotNull(child.mediaUrl) { "VIDEO child ${child.id} of media ${item.id} missing media_url" },
+                            requireNotNull(child.mediaUrl) {
+                                "VIDEO child ${child.id} of media ${item.id} missing media_url"
+                            },
                             videoKey,
                         )
-                        val thumbnailKeys =
-                            mediaProcessor.processThumbnail(
-                                requireNotNull(child.thumbnailUrl) {
-                                    "VIDEO child ${child.id} of media ${item.id} missing thumbnail_url"
-                                },
-                                keyPrefix,
-                            )
-                        Triple(thumbnailKeys.smallKey, thumbnailKeys.largeKey, videoKey as String?)
-                    } else {
-                        val imageKeys =
-                            mediaProcessor.processImage(
-                                requireNotNull(child.mediaUrl) { "IMAGE child ${child.id} of media ${item.id} missing media_url" },
-                                keyPrefix,
-                            )
-                        Triple(imageKeys.smallKey, imageKeys.largeKey, null as String?)
-                    }
+                    val thumbnails =
+                        mediaProcessor.processThumbnail(
+                            requireNotNull(child.thumbnailUrl) {
+                                "VIDEO child ${child.id} of media ${item.id} missing thumbnail_url"
+                            },
+                            keyPrefix,
+                        )
 
-                PostMediaItemUpsert(
-                    position = position,
-                    mediaType = child.mediaType,
-                    smallPath = smallPath,
-                    largePath = largePath,
-                    videoPath = videoPath,
-                )
+                    PostMediaItemUpsert(
+                        position = position,
+                        mediaType = child.mediaType,
+                        smallPath = thumbnails.small.key,
+                        smallFileSizeBytes = thumbnails.small.fileSizeBytes,
+                        smallWidth = thumbnails.small.width,
+                        smallHeight = thumbnails.small.height,
+                        largePath = thumbnails.large.key,
+                        largeFileSizeBytes = thumbnails.large.fileSizeBytes,
+                        largeWidth = thumbnails.large.width,
+                        largeHeight = thumbnails.large.height,
+                        videoPath = video.key,
+                        videoFileSizeBytes = video.fileSizeBytes,
+                        videoWidth = video.width,
+                        videoHeight = video.height,
+                    )
+                } else {
+                    val images =
+                        mediaProcessor.processImage(
+                            requireNotNull(child.mediaUrl) { "IMAGE child ${child.id} of media ${item.id} missing media_url" },
+                            keyPrefix,
+                        )
+
+                    PostMediaItemUpsert(
+                        position = position,
+                        mediaType = child.mediaType,
+                        smallPath = images.small.key,
+                        smallFileSizeBytes = images.small.fileSizeBytes,
+                        smallWidth = images.small.width,
+                        smallHeight = images.small.height,
+                        largePath = images.large.key,
+                        largeFileSizeBytes = images.large.fileSizeBytes,
+                        largeWidth = images.large.width,
+                        largeHeight = images.large.height,
+                        videoPath = null,
+                        videoFileSizeBytes = null,
+                        videoWidth = null,
+                        videoHeight = null,
+                    )
+                }
             }
 
         postRepository.upsert(
