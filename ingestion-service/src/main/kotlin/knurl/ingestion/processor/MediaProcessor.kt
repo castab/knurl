@@ -30,9 +30,34 @@ data class ImageVariantKeys(
 )
 
 /**
- * Memory-safe download/upload pipeline. Images are decoded into memory only long enough to
- * produce two compressed WebP variants (unavoidable for any resize - see AGENTS.md); videos are
- * streamed straight through to S3 without ever landing in a byte array.
+ * Grid geometry: scale until the shorter side fills the box, then center-crop the longer side away.
+ * Every grid that consumes a small variant is a fixed 1:1 cell (`aspect-ratio: 1 / 1` in the gallery
+ * and admin stylesheets), so a uniform square is what that view actually wants.
+ */
+internal fun squareVariant(
+    image: ImmutableImage,
+    dimension: Int,
+): ImmutableImage = image.cover(dimension, dimension)
+
+/**
+ * Detail-view geometry: scale down until the whole frame fits inside a `dimension` box, preserving
+ * the source aspect ratio. Deliberately *not* [squareVariant] - the large variant backs the lightbox's
+ * full-detail view, and a center-crop there permanently discarded the top and bottom of every portrait
+ * photo (cropping through heads in event shots) before the image was ever stored.
+ *
+ * `bound` never upscales, so a source smaller than the box is stored at its original size, and it pads
+ * nothing - the lightbox already letterboxes via `object-fit: contain`, so baked-in bars would be waste.
+ */
+internal fun boundedVariant(
+    image: ImmutableImage,
+    dimension: Int,
+): ImmutableImage = image.bound(dimension, dimension)
+
+/**
+ * Memory-safe download/upload pipeline. Images are decoded into memory only long enough to produce
+ * two compressed WebP variants - a center-cropped square thumbnail and an aspect-preserving detail
+ * image (unavoidable for any resize - see AGENTS.md); videos are streamed straight through to S3
+ * without ever landing in a byte array.
  */
 class MediaProcessor(
     private val okHttpClient: OkHttpClient,
@@ -47,8 +72,8 @@ class MediaProcessor(
 
         val smallKey = "$keyPrefix/small.webp"
         val largeKey = "$keyPrefix/large.webp"
-        uploadResizedWebp(original, SMALL_DIMENSION, smallKey)
-        uploadResizedWebp(original, LARGE_DIMENSION, largeKey)
+        uploadWebp(squareVariant(original, SMALL_DIMENSION), smallKey)
+        uploadWebp(boundedVariant(original, LARGE_DIMENSION), largeKey)
 
         return ImageVariantKeys(smallKey, largeKey)
     }
@@ -68,7 +93,7 @@ class MediaProcessor(
         sourceUrl: String,
         key: String,
     ) {
-        uploadResizedWebp(downloadImage(sourceUrl), SMALL_DIMENSION, key)
+        uploadWebp(squareVariant(downloadImage(sourceUrl), SMALL_DIMENSION), key)
     }
 
     /**
@@ -141,12 +166,12 @@ class MediaProcessor(
         }
     }
 
-    private fun uploadResizedWebp(
+    /** Encodes an already-resized raster and stores it; the geometry choice belongs to the caller. */
+    private fun uploadWebp(
         image: ImmutableImage,
-        dimension: Int,
         key: String,
     ) {
-        val bytes = image.cover(dimension, dimension).bytes(WebpWriter.DEFAULT.withQ(WEBP_QUALITY))
+        val bytes = image.bytes(WebpWriter.DEFAULT.withQ(WEBP_QUALITY))
         s3Client.putObject(
             PutObjectRequest
                 .builder()
