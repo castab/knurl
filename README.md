@@ -6,7 +6,7 @@ Knurl is a low-memory Instagram media aggregation engine written in Kotlin. It's
 - **`ingestion-service`** — one process per Instagram account; a daemon (or cron-triggered, one-shot process) that catalogs the account's entire media feed, downloads/stores admin-selected posts, enforces retention, and sweeps orphaned objects out of the bucket.
 - **`presentation-service`** — a multi-tenant read API (built on [http4k](https://www.http4k.org)) that serves any registered account's gallery as JSON with S3 presigned URLs, plus a Bearer-secured analytics tracking endpoint and a per-account-authenticated admin API for curating what gets synced.
 
-Both services are designed for a strict **128MB heap** (`-Xmx128m`), so all file I/O and remote asset downloads are streamed rather than buffered — see [`AGENTS.md`](./AGENTS.md) for the exact rules if you're modifying this code. The flag itself is not set by anything in this repo; set it on your deployment platform (e.g. `JAVA_TOOL_OPTIONS=-Xmx128m`).
+`ingestion-service` is an ephemeral sync job with a **512MB heap** (`-Xmx512m`, set in its Dockerfile); `presentation-service` retains a 128MB deployment target. Both services stream remote assets rather than buffering them, regardless of that capacity — see [`AGENTS.md`](./AGENTS.md) for the exact rules. Allocate at least 1 GiB of container memory to ingestion for JVM native memory, thread stacks, and `ffprobe` in addition to its Java heap.
 
 Neither service uses an application framework (no Spring Boot, Micronaut, Ratpack, DI container). Each is a plain `fun main()` that manually constructs and wires its own collaborators.
 
@@ -28,7 +28,7 @@ Neither service uses an application framework (no Spring Boot, Micronaut, Ratpac
 | Database access | JDBI3 + HikariCP |
 | Migrations | Flyway |
 | Object storage | AWS SDK v2 (`S3Client`, `S3Presigner`), against any S3-compatible provider (e.g. Railway Buckets) |
-| Image processing | Scrimage → WebP |
+| Image processing | Scrimage → WebP; ffprobe reads stored-video dimensions from the source container stream |
 | Testing | Kotest |
 | Lint/format | Kotlinter (ktlint) |
 
@@ -55,7 +55,7 @@ Each service reads its config from a bundled `application.conf` (HOCON), which c
 | `INSTAGRAM_API_VERSION` | no | ingestion | Graph API version. Default `v21.0`. |
 | `RUN_ONCE` | no | ingestion | `true` to run a single sync cycle and exit (for cron-triggered deployment) instead of looping. Default `false`. |
 | `INGESTION_INTERVAL_SECONDS` | no | ingestion | Delay between sync cycles when not running once. Default `900`. |
-| `DB_MAX_POOL_SIZE` / `DB_MIN_IDLE` / `DB_IDLE_TIMEOUT_MS` | no | both | HikariCP pool overrides. Defaults (`2` / `1` / `30000`) match the low-memory deployment target — don't raise these without reviewing the heap budget. |
+| `DB_MAX_POOL_SIZE` / `DB_MIN_IDLE` / `DB_IDLE_TIMEOUT_MS` | no | both | HikariCP pool overrides. Defaults (`2` / `1` / `30000`) preserve the low-memory connection footprint — don't raise these without reviewing the heap budget. |
 
 **Storage privacy:** `S3_BUCKET_NAME` must be provisioned as a *private* bucket — no public-read bucket policy, no anonymous `s3:GetObject` grant, and no public-access-block override that would allow unsigned requests to succeed. Neither service ever sets an object ACL on upload (`ingestion-service`'s `PutObjectRequest` calls set only `bucket`/`key`/`contentType`), so object visibility is entirely inherited from the bucket's own default (private) configuration. The only supported read path is a presigned GET minted by `presentation-service`; an unsigned request to the plain object URL must return `403`/access-denied. If your provider's default differs (or you're reusing a bucket that previously had public access enabled), disable public access explicitly in that provider's console/IaC before deploying.
 
@@ -148,7 +148,7 @@ Deselecting takes effect immediately — the item leaves the gallery on the next
 
 ## API
 
-- `GET /api/v1/accounts/{accountId}/gallery?sort=recent|views&limit=12&page=1` — public, paginated (see [Paginated responses](#paginated-responses)). `limit` defaults to `12` and is silently clamped to `1..50`; `page` defaults to `1`. `sort` must be `recent` or `views` (anything else returns `400`). Each post in `data` carries a `mediaItems` array (one entry per downloaded image/video, in carousel display order — a single-image/video post still has exactly one entry) of presigned S3 GET URLs (valid for `S3_PRESIGNED_GET_TTL_SECONDS`, default 6h), each with `mediaType` (`IMAGE`/`VIDEO` — this item's own type, independent of the post's own `mediaType`, so a UI can attach the right controls to each carousel slide), `smallUrl`/`largeUrl`/`videoUrl`/`mediaUrlExpiresAt` so consumers know when to refetch. `CAROUSEL_ALBUM` posts can have multiple entries; other `mediaType`s always have exactly one.
+- `GET /api/v1/accounts/{accountId}/gallery?sort=recent|views&limit=12&page=1` — public, paginated (see [Paginated responses](#paginated-responses)). `limit` defaults to `12` and is silently clamped to `1..50`; `page` defaults to `1`. `sort` must be `recent` or `views` (anything else returns `400`). Each post in `data` carries a `mediaItems` array (one entry per downloaded image/video, in carousel display order — a single-image/video post still has exactly one entry) of presigned S3 GET URLs (valid for `S3_PRESIGNED_GET_TTL_SECONDS`, default 6h). Every URL has persisted metadata for UI layout: `smallUrl`/`smallFileSizeBytes`/`smallWidth`/`smallHeight`, `largeUrl`/`largeFileSizeBytes`/`largeWidth`/`largeHeight`, and optional `videoUrl`/`videoFileSizeBytes`/`videoWidth`/`videoHeight`; `mediaUrlExpiresAt` says when to refetch. Each entry also has `mediaType` (`IMAGE`/`VIDEO` — this item's own type, independent of the post's own `mediaType`, so a UI can attach the right controls to each carousel slide). `CAROUSEL_ALBUM` posts can have multiple entries; other `mediaType`s always have exactly one.
 - `POST /api/v1/accounts/{accountId}/gallery/track` — requires `Authorization: Bearer <API_BEARER_TOKEN>`. Body: `{ "id": "<post uuid>", "event": "view" | "click" }`.
 - `GET /api/v1/admin/accounts/{accountId}/catalog` — requires `Authorization: Bearer <that account's ADMIN_TOKEN>`. Paginated in the same envelope as the gallery, with `limit` defaulting to `50` (clamped to `1..50`) and `page` to `1`. Filters apply server-side, across the whole catalog rather than one page:
   - `selected=true|false` — by selection state.

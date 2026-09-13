@@ -65,8 +65,17 @@
                     "mediaItems" : [ {
                       "mediaType" : "IMAGE",
                       "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+                      "smallFileSizeBytes" : 18432,
+                      "smallWidth" : 400,
+                      "smallHeight" : 400,
                       "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+                      "largeFileSizeBytes" : 84736,
+                      "largeWidth" : 800,
+                      "largeHeight" : 600,
                       "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+                      "videoFileSizeBytes" : 1048576,
+                      "videoWidth" : 1920,
+                      "videoHeight" : 1080,
                       "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
                     } ],
                     "viewCount" : 0,
@@ -398,8 +407,17 @@
               "mediaItems" : [ {
                 "mediaType" : "IMAGE",
                 "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+                "smallFileSizeBytes" : 18432,
+                "smallWidth" : 400,
+                "smallHeight" : 400,
                 "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+                "largeFileSizeBytes" : 84736,
+                "largeWidth" : 800,
+                "largeHeight" : 600,
                 "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+                "videoFileSizeBytes" : 1048576,
+                "videoWidth" : 1920,
+                "videoHeight" : 1080,
                 "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
               } ],
               "viewCount" : 0,
@@ -424,8 +442,17 @@
             "mediaItems" : [ {
               "mediaType" : "IMAGE",
               "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+              "smallFileSizeBytes" : 18432,
+              "smallWidth" : 400,
+              "smallHeight" : 400,
               "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+              "largeFileSizeBytes" : 84736,
+              "largeWidth" : 800,
+              "largeHeight" : 600,
               "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+              "videoFileSizeBytes" : 1048576,
+              "videoWidth" : 1920,
+              "videoHeight" : 1080,
               "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
             } ],
             "viewCount" : 0,
@@ -482,8 +509,17 @@
             "example" : [ {
               "mediaType" : "IMAGE",
               "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+              "smallFileSizeBytes" : 18432,
+              "smallWidth" : 400,
+              "smallHeight" : 400,
               "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+              "largeFileSizeBytes" : 84736,
+              "largeWidth" : 800,
+              "largeHeight" : 600,
               "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+              "videoFileSizeBytes" : 1048576,
+              "videoWidth" : 1920,
+              "videoHeight" : 1080,
               "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
             } ],
             "format" : null,
@@ -509,8 +545,17 @@
           "mediaItems" : [ {
             "mediaType" : "IMAGE",
             "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+            "smallFileSizeBytes" : 18432,
+            "smallWidth" : 400,
+            "smallHeight" : 400,
             "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+            "largeFileSizeBytes" : 84736,
+            "largeWidth" : 800,
+            "largeHeight" : 600,
             "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+            "videoFileSizeBytes" : 1048576,
+            "videoWidth" : 1920,
+            "videoHeight" : 1080,
             "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
           } ],
           "viewCount" : 0,
@@ -532,15 +577,60 @@
             "format" : null,
             "type" : "string"
           },
+          "smallFileSizeBytes" : {
+            "example" : 18432,
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "smallWidth" : {
+            "example" : 400,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "smallHeight" : {
+            "example" : 400,
+            "format" : "int32",
+            "type" : "integer"
+          },
           "largeUrl" : {
             "example" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
             "format" : null,
             "type" : "string"
           },
+          "largeFileSizeBytes" : {
+            "example" : 84736,
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "largeWidth" : {
+            "example" : 800,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "largeHeight" : {
+            "example" : 600,
+            "format" : "int32",
+            "type" : "integer"
+          },
           "videoUrl" : {
             "example" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
             "format" : null,
             "type" : [ "string", "null" ]
+          },
+          "videoFileSizeBytes" : {
+            "example" : 1048576,
+            "format" : "int64",
+            "type" : [ "integer", "null" ]
+          },
+          "videoWidth" : {
+            "example" : 1920,
+            "format" : "int32",
+            "type" : [ "integer", "null" ]
+          },
+          "videoHeight" : {
+            "example" : 1080,
+            "format" : "int32",
+            "type" : [ "integer", "null" ]
           },
           "mediaUrlExpiresAt" : {
             "example" : "2024-01-01T06:00:00Z",
@@ -551,13 +641,22 @@
         "example" : {
           "mediaType" : "IMAGE",
           "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+          "smallFileSizeBytes" : 18432,
+          "smallWidth" : 400,
+          "smallHeight" : 400,
           "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+          "largeFileSizeBytes" : 84736,
+          "largeWidth" : 800,
+          "largeHeight" : 600,
           "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+          "videoFileSizeBytes" : 1048576,
+          "videoWidth" : 1920,
+          "videoHeight" : 1080,
           "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
         },
         "format" : null,
         "type" : "object",
-        "required" : [ "largeUrl", "mediaType", "mediaUrlExpiresAt", "smallUrl" ]
+        "required" : [ "largeFileSizeBytes", "largeHeight", "largeUrl", "largeWidth", "mediaType", "mediaUrlExpiresAt", "smallFileSizeBytes", "smallHeight", "smallUrl", "smallWidth" ]
       },
       "PaginationMeta" : {
         "properties" : {

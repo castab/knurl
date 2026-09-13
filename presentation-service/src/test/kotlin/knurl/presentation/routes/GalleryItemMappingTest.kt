@@ -40,8 +40,17 @@ private fun testMediaItem(
         position = position,
         mediaType = mediaType,
         smallPath = "posts/media-1/$position/small.webp",
+        smallFileSizeBytes = 18_432,
+        smallWidth = 400,
+        smallHeight = 400,
         largePath = "posts/media-1/$position/large.webp",
+        largeFileSizeBytes = 84_736,
+        largeWidth = 800,
+        largeHeight = 600,
         videoPath = videoPath,
+        videoFileSizeBytes = videoPath?.let { 1_048_576 },
+        videoWidth = videoPath?.let { 1_920 },
+        videoHeight = videoPath?.let { 1_080 },
     )
 
 /**
@@ -85,6 +94,23 @@ class GalleryItemMappingTest :
             mediaResponse.largeUrl shouldContain item.largePath
             mediaResponse.smallUrl shouldNotContain item.largePath
             mediaResponse.largeUrl shouldNotContain item.smallPath
+        }
+
+        test("includes the stored size and dimensions for every rendition") {
+            val postId = Uuid.random()
+            val item = testMediaItem(postId, position = 0, mediaType = "VIDEO", videoPath = "posts/media-1/0/original")
+
+            val mediaResponse = testPost(listOf(item)).toResponse(testPresigner()).mediaItems.single()
+
+            mediaResponse.smallFileSizeBytes shouldBe item.smallFileSizeBytes
+            mediaResponse.smallWidth shouldBe item.smallWidth
+            mediaResponse.smallHeight shouldBe item.smallHeight
+            mediaResponse.largeFileSizeBytes shouldBe item.largeFileSizeBytes
+            mediaResponse.largeWidth shouldBe item.largeWidth
+            mediaResponse.largeHeight shouldBe item.largeHeight
+            mediaResponse.videoFileSizeBytes shouldBe item.videoFileSizeBytes
+            mediaResponse.videoWidth shouldBe item.videoWidth
+            mediaResponse.videoHeight shouldBe item.videoHeight
         }
 
         test("signs the video path when present") {

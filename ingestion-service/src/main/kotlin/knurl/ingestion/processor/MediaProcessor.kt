@@ -7,8 +7,11 @@ import okhttp3.Request
 import software.amazon.awssdk.core.sync.RequestBody
 import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.model.PutObjectRequest
+import java.io.FilterInputStream
 import java.io.IOException
 import java.nio.file.Files
+import java.time.Duration
+import java.util.concurrent.TimeUnit
 
 private const val SMALL_DIMENSION = 400
 private const val LARGE_DIMENSION = 800
@@ -24,10 +27,45 @@ private const val MAX_SOURCE_IMAGE_BYTES = 32L * 1024 * 1024
 /** Content types this service will store verbatim on a video object; anything else falls back to `video/mp4`. */
 private val ALLOWED_VIDEO_CONTENT_TYPES = setOf("video/mp4", "video/quicktime", "video/webm")
 
-data class ImageVariantKeys(
-    val smallKey: String,
-    val largeKey: String,
+data class StoredMediaAsset(
+    val key: String,
+    val fileSizeBytes: Long,
+    val width: Int,
+    val height: Int,
 )
+
+data class ImageVariants(
+    val small: StoredMediaAsset,
+    val large: StoredMediaAsset,
+)
+
+data class StoredVideoAsset(
+    val key: String,
+    val fileSizeBytes: Long,
+    val width: Int,
+    val height: Int,
+)
+
+internal data class VideoDimensions(
+    val width: Int,
+    val height: Int,
+)
+
+/** Parses ffprobe's deliberately minimal `width,height` CSV output. */
+internal fun parseVideoDimensions(output: String): VideoDimensions {
+    val values =
+        output
+            .trim()
+            .lineSequence()
+            .lastOrNull()
+            ?.split(',') ?: emptyList()
+    val width = values.getOrNull(0)?.trim()?.toIntOrNull()
+    val height = values.getOrNull(1)?.trim()?.toIntOrNull()
+    require(width != null && width > 0 && height != null && height > 0) {
+        "ffprobe did not return a valid video width and height: ${output.take(512)}"
+    }
+    return VideoDimensions(width, height)
+}
 
 /**
  * Grid geometry: scale until the shorter side fills the box, then center-crop the longer side away.
@@ -67,21 +105,19 @@ class MediaProcessor(
     fun processImage(
         sourceUrl: String,
         keyPrefix: String,
-    ): ImageVariantKeys {
+    ): ImageVariants {
         val original = downloadImage(sourceUrl)
 
-        val smallKey = "$keyPrefix/small.webp"
-        val largeKey = "$keyPrefix/large.webp"
-        uploadWebp(squareVariant(original, SMALL_DIMENSION), smallKey)
-        uploadWebp(boundedVariant(original, LARGE_DIMENSION), largeKey)
+        val small = uploadWebp(squareVariant(original, SMALL_DIMENSION), "$keyPrefix/small.webp")
+        val large = uploadWebp(boundedVariant(original, LARGE_DIMENSION), "$keyPrefix/large.webp")
 
-        return ImageVariantKeys(smallKey, largeKey)
+        return ImageVariants(small, large)
     }
 
     fun processThumbnail(
         thumbnailUrl: String,
         keyPrefix: String,
-    ): ImageVariantKeys = processImage(thumbnailUrl, keyPrefix)
+    ): ImageVariants = processImage(thumbnailUrl, keyPrefix)
 
     /**
      * Cheap catalog-browse thumbnail: same decode/resize/WebP pipeline as [processImage], but
@@ -131,9 +167,12 @@ class MediaProcessor(
     fun processVideoPassthrough(
         sourceUrl: String,
         key: String,
-    ) {
+    ): StoredVideoAsset {
         val request = Request.Builder().url(sourceUrl).build()
         okHttpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("Video download failed (${response.code}) for $sourceUrl")
+            }
             val body = response.body ?: throw IOException("Empty video body for $sourceUrl")
             // Allowlisted, not taken verbatim: this value is stored on the S3 object and replayed by every
             // presigned GET, so an unexpected upstream Content-Type would be served from the bucket origin
@@ -150,18 +189,36 @@ class MediaProcessor(
                     .contentType(contentType)
                     .build()
 
-            if (contentLength >= 0) {
-                s3Client.putObject(putObjectRequest, RequestBody.fromInputStream(body.byteStream(), contentLength))
-            } else {
-                val tempFile = Files.createTempFile("knurl-video-", ".tmp")
-                try {
-                    body.byteStream().use { input ->
-                        Files.newOutputStream(tempFile).use { output -> input.copyTo(output) }
+            val probe = VideoProbe.start()
+            try {
+                val fileSizeBytes =
+                    if (contentLength >= 0) {
+                        val input = ProbingInputStream(body.byteStream(), probe)
+                        try {
+                            s3Client.putObject(putObjectRequest, RequestBody.fromInputStream(input, contentLength))
+                            input.byteCount
+                        } finally {
+                            input.close()
+                        }
+                    } else {
+                        val tempFile = Files.createTempFile("knurl-video-", ".tmp")
+                        try {
+                            ProbingInputStream(body.byteStream(), probe).use { input ->
+                                Files.newOutputStream(tempFile).use { output -> input.copyTo(output) }
+                            }
+                            val size = Files.size(tempFile)
+                            s3Client.putObject(putObjectRequest, RequestBody.fromFile(tempFile))
+                            size
+                        } finally {
+                            Files.deleteIfExists(tempFile)
+                        }
                     }
-                    s3Client.putObject(putObjectRequest, RequestBody.fromFile(tempFile))
-                } finally {
-                    Files.deleteIfExists(tempFile)
-                }
+
+                val dimensions = probe.finish()
+                return StoredVideoAsset(key, fileSizeBytes, dimensions.width, dimensions.height)
+            } catch (e: Exception) {
+                probe.cancel()
+                throw e
             }
         }
     }
@@ -170,7 +227,7 @@ class MediaProcessor(
     private fun uploadWebp(
         image: ImmutableImage,
         key: String,
-    ) {
+    ): StoredMediaAsset {
         val bytes = image.bytes(WebpWriter.DEFAULT.withQ(WEBP_QUALITY))
         s3Client.putObject(
             PutObjectRequest
@@ -181,5 +238,124 @@ class MediaProcessor(
                 .build(),
             RequestBody.fromBytes(bytes),
         )
+        return StoredMediaAsset(key, bytes.size.toLong(), image.width, image.height)
+    }
+}
+
+/**
+ * Mirrors bytes already being streamed to S3 into ffprobe's standard input. ffprobe reads the
+ * container incrementally, so the JVM retains neither the source video nor a second full copy.
+ */
+private class ProbingInputStream(
+    input: java.io.InputStream,
+    private val probe: VideoProbe,
+) : FilterInputStream(input) {
+    var byteCount: Long = 0
+        private set
+
+    override fun read(): Int {
+        val value = super.read()
+        if (value >= 0) {
+            probe.writeByte(value)
+            byteCount++
+        }
+        return value
+    }
+
+    override fun read(
+        buffer: ByteArray,
+        offset: Int,
+        length: Int,
+    ): Int {
+        val count = super.read(buffer, offset, length)
+        if (count > 0) {
+            probe.write(buffer, offset, count)
+            byteCount += count
+        }
+        return count
+    }
+
+    override fun close() {
+        try {
+            super.close()
+        } finally {
+            probe.closeInput()
+        }
+    }
+}
+
+private class VideoProbe private constructor(
+    private val process: Process,
+) {
+    private var inputOpen = true
+
+    fun writeByte(value: Int) {
+        if (!inputOpen) return
+        try {
+            process.outputStream.write(value)
+        } catch (_: IOException) {
+            closeInput()
+        }
+    }
+
+    fun write(
+        buffer: ByteArray,
+        offset: Int,
+        length: Int,
+    ) {
+        if (!inputOpen) return
+        try {
+            process.outputStream.write(buffer, offset, length)
+        } catch (_: IOException) {
+            closeInput()
+        }
+    }
+
+    fun closeInput() {
+        if (!inputOpen) return
+        inputOpen = false
+        runCatching { process.outputStream.close() }
+    }
+
+    fun finish(): VideoDimensions {
+        closeInput()
+        if (!process.waitFor(PROBE_TIMEOUT.toSeconds(), TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            throw IOException("ffprobe did not finish within $PROBE_TIMEOUT")
+        }
+
+        // This command emits exactly one short CSV line; the bounded read keeps a broken binary
+        // from turning probe diagnostics into another unbounded payload path.
+        val output = process.inputStream.readNBytes(MAX_PROBE_OUTPUT_BYTES).toString(Charsets.UTF_8)
+        if (process.exitValue() != 0) {
+            throw IOException("ffprobe failed with exit code ${process.exitValue()}: ${output.take(512)}")
+        }
+        return parseVideoDimensions(output)
+    }
+
+    fun cancel() {
+        closeInput()
+        process.destroyForcibly()
+    }
+
+    companion object {
+        private val PROBE_TIMEOUT: Duration = Duration.ofSeconds(30)
+        private const val MAX_PROBE_OUTPUT_BYTES = 4_096
+
+        fun start(): VideoProbe =
+            VideoProbe(
+                ProcessBuilder(
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=width,height",
+                    "-of",
+                    "csv=p=0",
+                    "pipe:0",
+                ).redirectErrorStream(true).start(),
+            )
     }
 }

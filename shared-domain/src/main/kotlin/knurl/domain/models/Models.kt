@@ -47,8 +47,17 @@ data class PostMediaItem(
     val position: Int,
     val mediaType: String,
     val smallPath: String,
+    val smallFileSizeBytes: Long,
+    val smallWidth: Int,
+    val smallHeight: Int,
     val largePath: String,
+    val largeFileSizeBytes: Long,
+    val largeWidth: Int,
+    val largeHeight: Int,
     val videoPath: String?,
+    val videoFileSizeBytes: Long?,
+    val videoWidth: Int?,
+    val videoHeight: Int?,
 )
 
 /** Input to [InstagramPostRepository.upsert][knurl.domain.repositories.InstagramPostRepository.upsert] for one [PostMediaItem], before it has a surrogate `id`/`postId`. */
@@ -56,8 +65,17 @@ data class PostMediaItemUpsert(
     val position: Int,
     val mediaType: String,
     val smallPath: String,
+    val smallFileSizeBytes: Long,
+    val smallWidth: Int,
+    val smallHeight: Int,
     val largePath: String,
+    val largeFileSizeBytes: Long,
+    val largeWidth: Int,
+    val largeHeight: Int,
     val videoPath: String?,
+    val videoFileSizeBytes: Long?,
+    val videoWidth: Int?,
+    val videoHeight: Int?,
 )
 
 /**
