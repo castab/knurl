@@ -8,6 +8,8 @@
     tabButtons: document.querySelectorAll(".tab-button"),
     tabPanels: document.querySelectorAll(".tab-panel"),
 
+    gallerySelect: document.getElementById("gallerySelect"),
+    galleryRefresh: document.getElementById("galleryRefresh"),
     gallerySort: document.getElementById("gallerySort"),
     galleryLimit: document.getElementById("galleryLimit"),
     galleryLoad: document.getElementById("galleryLoad"),
@@ -19,7 +21,14 @@
     galleryNext: document.getElementById("galleryNext"),
     galleryPageLabel: document.getElementById("galleryPageLabel"),
 
-    filterSelected: document.getElementById("filterSelected"),
+    adminGallerySelect: document.getElementById("adminGallerySelect"),
+    galleryNewName: document.getElementById("galleryNewName"),
+    galleryCreate: document.getElementById("galleryCreate"),
+    galleryRename: document.getElementById("galleryRename"),
+    galleryDelete: document.getElementById("galleryDelete"),
+    galleryManagerStatus: document.getElementById("galleryManagerStatus"),
+    galleryManagerError: document.getElementById("galleryManagerError"),
+    filterInGallery: document.getElementById("filterInGallery"),
     filterPending: document.getElementById("filterPending"),
     filterImage: document.getElementById("filterImage"),
     filterCarousel: document.getElementById("filterCarousel"),
@@ -214,11 +223,15 @@
   // Links from the most recent gallery response, so Prev/Next can follow them directly.
   let galleryLinks = { prev: null, next: null };
 
+  function selectedGalleryId() {
+    return els.gallerySelect.value || "";
+  }
+
   function galleryFirstPageUrl() {
     const sort = els.gallerySort.value;
     const limit = els.galleryLimit.value;
     return (
-      `/api/v1/accounts/${encodeURIComponent(accountId())}/gallery` +
+      `/api/v1/accounts/${encodeURIComponent(accountId())}/galleries/${encodeURIComponent(selectedGalleryId())}` +
       `?sort=${encodeURIComponent(sort)}&limit=${encodeURIComponent(limit)}&page=1`
     );
   }
@@ -228,6 +241,10 @@
     showError(els.galleryError, "");
     if (!accountId()) {
       showError(els.galleryError, "Enter an Account ID first.");
+      return;
+    }
+    if (!selectedGalleryId()) {
+      showError(els.galleryError, "Pick a gallery first. If the list is empty, create one on the Admin tab.");
       return;
     }
     els.galleryLoad.disabled = true;
@@ -318,7 +335,10 @@
     }
     btn.disabled = true;
     try {
-      await apiFetch(`/api/v1/accounts/${encodeURIComponent(accountId())}/gallery/track`, {
+      const trackUrl =
+        `/api/v1/accounts/${encodeURIComponent(accountId())}` +
+        `/galleries/${encodeURIComponent(selectedGalleryId())}/track`;
+      await apiFetch(trackUrl, {
         method: "POST",
         token,
         body: { id, event },
@@ -363,9 +383,21 @@
 
   // Everything except the Pending filter is applied server-side, so a filter narrows the whole
   // catalog rather than just the rows that happen to be loaded.
+  function adminGalleryId() {
+    return els.adminGallerySelect.value || "";
+  }
+
+  /** Membership is per gallery now, so "checked" means "in the gallery currently being curated". */
+  function isInCuratedGallery(item) {
+    const id = adminGalleryId();
+    return Boolean(id) && item.galleryIds.includes(id);
+  }
+
   function catalogFirstPageUrl() {
     const params = new URLSearchParams();
-    if (els.filterSelected.checked) params.set("selected", "true");
+    // The checkbox means "in the gallery I am curating", so it filters by that gallery's id
+    // server-side rather than by any global notion of membership.
+    if (els.filterInGallery.checked && adminGalleryId()) params.set("galleryId", adminGalleryId());
     for (const [field, type] of MEDIA_TYPE_FILTERS) {
       if (els[field].checked) params.append("mediaType", type);
     }
@@ -392,10 +424,10 @@
       const body = await apiFetch(url ?? catalogFirstPageUrl(), { token: adminToken() });
       catalogItems = body.data;
       for (const item of catalogItems) {
-        baseline.set(item.shortcode, item.selected);
+        baseline.set(item.shortcode, isInCuratedGallery(item));
         // Merge rather than overwrite: an unsaved toggle for this shortcode outranks what the
         // server just said, or paging away and back would silently discard it.
-        if (!pending.has(item.shortcode)) pending.set(item.shortcode, item.selected);
+        if (!pending.has(item.shortcode)) pending.set(item.shortcode, isInCuratedGallery(item));
       }
       catalogSelfLink = body.pagination.links.self;
       catalogLinks = renderPagination(
@@ -495,7 +527,7 @@
     const lifecycle = lifecycleBadge(item);
     // Only an item with downloaded media has anything to purge, and only the server knows for sure.
     // A deselected item is still worth offering it for, since its media survives the grace period.
-    const purgeAction = item.selected || item.deselectedAt
+    const purgeAction = item.galleryIds.length > 0 || item.deselectedAt
       ? `<button type="button" class="link-button danger" data-purge-shortcode="${escapeHtml(item.shortcode)}">Delete now</button>`
       : "";
     const cardClasses = ["card"];
@@ -549,7 +581,7 @@
   // These four are server-side filters, so changing one has to refetch from page 1 - the rows that
   // match may live anywhere in the catalog, not just in the page currently loaded.
   [
-    els.filterSelected,
+    els.filterInGallery,
     els.filterImage,
     els.filterCarousel,
     els.filterVideo,
@@ -573,16 +605,21 @@
     showError(els.catalogError, "");
     const { select, deselect } = diffSelection();
     if (!select.length && !deselect.length) return;
+    if (!adminGalleryId()) {
+      showError(els.catalogError, "Pick a gallery to curate first.");
+      return;
+    }
     els.catalogCommit.disabled = true;
-    els.catalogStatus.textContent = "Committing selection...";
+    els.catalogStatus.textContent = "Committing membership...";
     try {
       const result = await apiFetch(
-        `/api/v1/admin/accounts/${encodeURIComponent(accountId())}/catalog/selections`,
-        { method: "PATCH", token: adminToken(), body: { select, deselect } },
+        `/api/v1/admin/accounts/${encodeURIComponent(accountId())}` +
+          `/galleries/${encodeURIComponent(adminGalleryId())}/items`,
+        { method: "PATCH", token: adminToken(), body: { add: select, remove: deselect } },
       );
       els.catalogStatus.textContent =
-        `Selected: ${result.selected.length}, Deselected: ${result.deselected.length}, ` +
-        `Not found: ${result.notFound.length}`;
+        `Added: ${result.added.length}, Removed: ${result.removed.length}, ` +
+        `Already present: ${result.alreadyPresent.length}, Not found: ${result.notFound.length}`;
       // Every pending change has now been applied, so drop the accumulated state entirely and
       // refresh from server truth - staying on the page being viewed rather than jumping to 1.
       baseline = new Map();
@@ -631,4 +668,162 @@
   });
 
   els.catalogLoad.addEventListener("click", () => loadCatalog());
+
+  // ---------------------------------------------------------------------------
+  // Galleries
+  //
+  // An account has any number of named galleries and no default one, so both tabs
+  // need to know which gallery they are pointed at before they can do anything.
+  // The list is public, so the gallery tab loads it without a token; the admin tab
+  // reuses the same payload rather than fetching it twice.
+  // ---------------------------------------------------------------------------
+
+  let galleries = [];
+
+  function renderGallerySelect(select, previousValue) {
+    if (!galleries.length) {
+      select.innerHTML = '<option value="">(no galleries yet)</option>';
+      select.value = "";
+      return;
+    }
+    select.innerHTML = galleries
+      .map(
+        (g) =>
+          `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)} (${g.publishedCount}/${g.itemCount})</option>`,
+      )
+      .join("");
+    // Keep the current pick across a refresh where possible, so renaming or creating
+    // a gallery doesn't silently move the admin to a different one mid-curation.
+    const stillThere = galleries.some((g) => g.id === previousValue);
+    select.value = stillThere ? previousValue : galleries[0].id;
+  }
+
+  function currentGallery() {
+    return galleries.find((g) => g.id === adminGalleryId()) ?? null;
+  }
+
+  function updateGalleryManagerButtons() {
+    const hasSelection = Boolean(adminGalleryId());
+    els.galleryRename.disabled = !hasSelection;
+    els.galleryDelete.disabled = !hasSelection;
+  }
+
+  async function loadGalleries() {
+    if (!accountId()) return;
+    const previousPublic = els.gallerySelect.value;
+    const previousAdmin = els.adminGallerySelect.value;
+    try {
+      const body = await apiFetch(
+        `/api/v1/accounts/${encodeURIComponent(accountId())}/galleries?limit=50&page=1`,
+      );
+      galleries = body.data;
+      renderGallerySelect(els.gallerySelect, previousPublic);
+      renderGallerySelect(els.adminGallerySelect, previousAdmin);
+      updateGalleryManagerButtons();
+    } catch (err) {
+      showError(els.galleryManagerError, err.message);
+    }
+  }
+
+  /** Membership is per gallery, so switching galleries invalidates every unsaved toggle. */
+  function resetCurationState() {
+    baseline = new Map();
+    pending = new Map();
+    els.catalogGrid.innerHTML = "";
+    els.catalogStatus.textContent = "";
+    els.catalogPagination.classList.add("hidden");
+    updatePendingSummary();
+  }
+
+  els.galleryRefresh.addEventListener("click", loadGalleries);
+  els.gallerySelect.addEventListener("change", () => loadGallery());
+
+  els.adminGallerySelect.addEventListener("change", () => {
+    updateGalleryManagerButtons();
+    resetCurationState();
+  });
+
+  els.galleryCreate.addEventListener("click", async () => {
+    showError(els.galleryManagerError, "");
+    const name = els.galleryNewName.value.trim();
+    if (!name) {
+      showError(els.galleryManagerError, "Enter a name for the new gallery.");
+      return;
+    }
+    if (!adminToken()) {
+      showError(els.galleryManagerError, "Enter an Admin Token first.");
+      return;
+    }
+    els.galleryCreate.disabled = true;
+    try {
+      const created = await apiFetch(
+        `/api/v1/admin/accounts/${encodeURIComponent(accountId())}/galleries`,
+        { method: "POST", token: adminToken(), body: { name } },
+      );
+      els.galleryNewName.value = "";
+      els.galleryManagerStatus.textContent = `Created "${created.name}"`;
+      await loadGalleries();
+      els.adminGallerySelect.value = created.id;
+      updateGalleryManagerButtons();
+      resetCurationState();
+    } catch (err) {
+      showError(els.galleryManagerError, err.message);
+    } finally {
+      els.galleryCreate.disabled = false;
+    }
+  });
+
+  els.galleryRename.addEventListener("click", async () => {
+    showError(els.galleryManagerError, "");
+    const gallery = currentGallery();
+    if (!gallery) return;
+    const name = window.prompt(`Rename "${gallery.name}" to:`, gallery.name);
+    if (name === null) return;
+    if (!name.trim()) {
+      showError(els.galleryManagerError, "A gallery name cannot be empty.");
+      return;
+    }
+    try {
+      const renamed = await apiFetch(
+        `/api/v1/admin/accounts/${encodeURIComponent(accountId())}/galleries/${encodeURIComponent(gallery.id)}`,
+        { method: "PATCH", token: adminToken(), body: { name: name.trim() } },
+      );
+      // The id is unchanged by design, so the selection and any links survive a rename.
+      els.galleryManagerStatus.textContent = `Renamed to "${renamed.name}"`;
+      await loadGalleries();
+    } catch (err) {
+      showError(els.galleryManagerError, err.message);
+    }
+  });
+
+  els.galleryDelete.addEventListener("click", async () => {
+    showError(els.galleryManagerError, "");
+    const gallery = currentGallery();
+    if (!gallery) return;
+    const confirmed = window.confirm(
+      `Delete the gallery "${gallery.name}"?\n\n` +
+        `It holds ${gallery.itemCount} item(s). Any item that is in no other gallery starts its ` +
+        `retention countdown, after which its downloaded media is deleted. The catalog entries stay, ` +
+        `so nothing is lost from the browse list.`,
+    );
+    if (!confirmed) return;
+    try {
+      const result = await apiFetch(
+        `/api/v1/admin/accounts/${encodeURIComponent(accountId())}` +
+          `/galleries/${encodeURIComponent(gallery.id)}?force=true`,
+        { method: "DELETE", token: adminToken() },
+      );
+      els.galleryManagerStatus.textContent =
+        `Deleted "${result.name}" (${result.itemsRemoved} item(s) removed, ` +
+        `${result.itemsReleased} now on a retention clock)`;
+      await loadGalleries();
+      resetCurationState();
+    } catch (err) {
+      showError(els.galleryManagerError, err.message);
+    }
+  });
+
+  els.accountId.addEventListener("change", loadGalleries);
+  if (accountId()) loadGalleries();
+
 })();

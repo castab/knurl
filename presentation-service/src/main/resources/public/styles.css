@@ -136,6 +136,18 @@ main {
   gap: 0.4rem;
 }
 
+/* The gallery manager sits above the catalog filters and reads as its own band, because picking
+   which gallery you are curating changes what every checkbox below it means. */
+.gallery-manager {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
+}
+
+.gallery-manager input[type="text"] {
+  min-width: 14rem;
+}
+
 .filter-group {
   display: flex;
   flex-wrap: wrap;

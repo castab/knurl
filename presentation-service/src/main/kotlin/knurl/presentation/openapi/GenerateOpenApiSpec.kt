@@ -3,9 +3,10 @@ package knurl.presentation.openapi
 import knurl.domain.config.S3Settings
 import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.CatalogRepository
-import knurl.domain.repositories.InstagramPostRepository
+import knurl.domain.repositories.GalleryRepository
 import knurl.presentation.auth.BearerAuth
 import knurl.presentation.routes.AdminCatalogRoutes
+import knurl.presentation.routes.AdminGalleryRoutes
 import knurl.presentation.routes.GalleryRoutes
 import knurl.presentation.s3.Presigner
 import org.http4k.contract.contract
@@ -32,7 +33,7 @@ import javax.sql.DataSource
 fun main(args: Array<String>) {
     val jdbi = Jdbi.create(NeverConnectDataSource)
     val accountRepository = AccountRepository(jdbi)
-    val postRepository = InstagramPostRepository(jdbi)
+    val galleryRepository = GalleryRepository(jdbi)
     val catalogRepository = CatalogRepository(jdbi)
 
     val presigner =
@@ -46,8 +47,9 @@ fun main(args: Array<String>) {
             Duration.ofSeconds(21600),
         )
     val bearerAuth = BearerAuth("placeholder")
-    val galleryRoutes = GalleryRoutes(postRepository, presigner)
+    val galleryRoutes = GalleryRoutes(galleryRepository, presigner)
     val adminCatalogRoutes = AdminCatalogRoutes(catalogRepository, accountRepository, presigner)
+    val adminGalleryRoutes = AdminGalleryRoutes(galleryRepository, accountRepository)
 
     val app =
         contract {
@@ -55,6 +57,7 @@ fun main(args: Array<String>) {
             descriptionPath = "/openapi.json"
             routes += galleryRoutes.routes(bearerAuth)
             routes += adminCatalogRoutes.routes()
+            routes += adminGalleryRoutes.routes()
         }
 
     val outputPath = args.firstOrNull() ?: "build/openapi/openapi.json"

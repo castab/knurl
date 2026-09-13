@@ -25,10 +25,62 @@ data class InstagramPost(
     val permalink: String,
     val timestamp: Instant,
     val mediaItems: List<PostMediaItem>,
-    val viewCount: Int = 0,
-    val clickCount: Int = 0,
     val isPinned: Boolean = false,
     val createdAt: Instant = Instant.now(),
+)
+
+/**
+ * A curated, named collection of an account's catalog items. [id] is the immutable identity public
+ * URLs are built from; [name] is a label an admin can change at any time without breaking a link.
+ *
+ * [itemCount] is how many items an admin has put in the gallery; [publishedCount] is how many of
+ * those actually have downloaded media and therefore appear in it. The gap between them is
+ * "added, but ingestion hasn't fetched it yet" - which is precisely the question an admin asks
+ * after curating, and otherwise looks like items silently going missing.
+ */
+data class Gallery(
+    val id: Uuid,
+    val instagramAccountId: String,
+    val name: String,
+    val itemCount: Int,
+    val publishedCount: Int,
+    val createdAt: Instant,
+    val updatedAt: Instant,
+)
+
+/**
+ * One post as it appears *in a particular gallery*, with that gallery's own engagement counters.
+ *
+ * The counters are a wrapper around [post] rather than fields on [InstagramPost] because they are
+ * genuinely not properties of the post: the same photo carries independent counts in every gallery
+ * holding it. [galleryId] travels with them so a value of this type can never be logged, cached or
+ * passed along without saying whose counters these are.
+ */
+data class GalleryPost(
+    val galleryId: Uuid,
+    val post: InstagramPost,
+    val viewCount: Int,
+    val clickCount: Int,
+)
+
+/** Result of [knurl.domain.repositories.GalleryRepository.updateItems]. */
+data class GalleryItemsResult(
+    val added: Set<String>,
+    val alreadyPresent: Set<String>,
+    val removed: Set<String>,
+    val notFound: Set<String>,
+)
+
+/**
+ * Result of [knurl.domain.repositories.GalleryRepository.delete]. [itemsReleased] is how many items
+ * lost their last gallery membership and therefore just started a retention countdown - the number
+ * an admin deserves to be told, since deleting a gallery is otherwise a silent way to schedule a lot
+ * of media for deletion.
+ */
+data class GalleryDeleteResult(
+    val name: String,
+    val itemsRemoved: Int,
+    val itemsReleased: Int,
 )
 
 /**
@@ -95,25 +147,25 @@ data class InstagramPostUpsert(
 
 /**
  * One row per item in the target account's entire Instagram media feed - populated automatically
- * every ingestion cycle regardless of [selected] state. Holds metadata only, plus one cheap
- * [thumbnailPath] (no large/video S3 paths); an actual [InstagramPost] is only created once a
- * catalog entry is marked `selected` by an admin.
+ * every ingestion cycle regardless of which galleries, if any, hold it. Holds metadata only, plus
+ * one cheap [thumbnailPath] (no large/video S3 paths); an actual [InstagramPost] is only created
+ * once an admin puts the entry in a gallery.
  *
  * [notDigestibleReason] is null for a normal, downloadable item. A non-null value (e.g.
  * `"copyright"`) means ingestion has determined the underlying media can never be fetched via the
- * Graph API - selecting it would sit forever without ever producing an [InstagramPost].
+ * Graph API - adding it to a gallery would sit forever without ever producing an [InstagramPost].
  *
  * [thumbnailPath] is null until a thumbnail has been fetched and stored (or the fetch hasn't
  * succeeded yet - retried every sync cycle, no permanent-failure tracking). Not admin-writable;
- * written only by the ingestion pipeline's thumbnail fetch, independent of [selected].
+ * written only by the ingestion pipeline's thumbnail fetch, independent of gallery membership.
  *
  * [deselectedAt] and [purgeRequestedAt] are the deletion clock for the item's *downloaded media*
  * (its [InstagramPost] row and S3 objects) - never for this catalog row itself, which always
- * survives so the item stays browsable and re-selectable. [deselectedAt] is stamped when an admin
- * deselects and starts the configured grace period; [purgeRequestedAt] is stamped by the admin
- * purge endpoint and skips that grace period entirely. Both are cleared on reselect, which is what
- * makes a reselected item ineligible for deletion and restarts the countdown from scratch if it is
- * ever deselected again.
+ * survives so the item stays browsable and re-addable. [deselectedAt] is stamped when the item
+ * leaves its *last* gallery and starts the configured grace period; [purgeRequestedAt] is stamped
+ * by the admin purge endpoint and skips that grace period entirely. Both are cleared when the item
+ * is added back to any gallery, which is what makes it ineligible for deletion again and restarts
+ * the countdown from scratch if it is ever removed once more.
  */
 data class CatalogEntry(
     val instagramMediaId: String,
@@ -123,20 +175,24 @@ data class CatalogEntry(
     val caption: String?,
     val permalink: String,
     val timestamp: Instant,
-    val selected: Boolean,
     val notDigestibleReason: String?,
     val thumbnailPath: String?,
     val deselectedAt: Instant?,
     val purgeRequestedAt: Instant?,
     val updatedAt: Instant,
+    /**
+     * Every gallery this item currently belongs to, possibly none. Populated by a batched follow-up
+     * query rather than an aggregate on the catalog row itself, the same way [InstagramPost]
+     * gathers its [PostMediaItem]s.
+     */
+    val galleryIds: List<Uuid> = emptyList(),
 )
 
 /**
  * Fields known to the ingestion pipeline before a catalog row exists - everything except
- * `selected` (always defaults to/preserves its prior value; only an admin API call changes it),
- * `thumbnailPath` (written separately by the thumbnail fetch step, never clobbered by this
- * upsert - same reasoning as `selected`), and `updatedAt` (left to the column default /
- * `CURRENT_TIMESTAMP` on conflict).
+ * `thumbnailPath` (written separately by the thumbnail fetch step, never clobbered by this upsert)
+ * and `updatedAt` (left to the column default / `CURRENT_TIMESTAMP` on conflict). Gallery
+ * membership lives in its own table and is admin-owned, so a re-sync cannot disturb it at all.
  */
 data class CatalogUpsert(
     val instagramMediaId: String,
@@ -147,12 +203,6 @@ data class CatalogUpsert(
     val permalink: String,
     val timestamp: Instant,
     val notDigestibleReason: String?,
-)
-
-/** Result of [knurl.domain.repositories.CatalogRepository.updateSelection]. */
-data class CatalogSelectionResult(
-    val selectedShortcodes: Set<String>,
-    val deselectedShortcodes: Set<String>,
 )
 
 /**
@@ -166,7 +216,7 @@ data class CatalogSelectionResult(
  */
 data class PurgeRequestResult(
     val accepted: Set<String>,
-    val notInGallery: Set<String>,
+    val notDownloaded: Set<String>,
 )
 
 data class SyncConfiguration(
@@ -225,7 +275,10 @@ data class Page<T>(
  * An empty [mediaTypes] means "no media-type restriction", not "match nothing".
  */
 data class CatalogFilter(
-    val selected: Boolean? = null,
+    /** Restrict to items belonging to this specific gallery. */
+    val galleryId: Uuid? = null,
+    /** Restrict to items belonging to at least one gallery (`true`) or to none at all (`false`). */
+    val inAnyGallery: Boolean? = null,
     val mediaTypes: Set<String> = emptySet(),
     val includeNotDigestible: Boolean = true,
 )

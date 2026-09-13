@@ -122,7 +122,7 @@ class MediaProcessor(
     /**
      * Cheap catalog-browse thumbnail: same decode/resize/WebP pipeline as [processImage], but
      * produces a single small variant instead of two - used for every catalog item regardless of
-     * [selected][knurl.domain.models.CatalogEntry.selected] state, so an extra 800px variant per
+     * gallery membership, so an extra 800px variant per
      * item would waste the "cheap" premise of fetching this for the whole feed every cycle.
      */
     fun processCatalogThumbnail(

@@ -1,9 +1,10 @@
 package knurl.presentation.routes
 
-import knurl.domain.models.InstagramPost
+import knurl.domain.models.Gallery
+import knurl.domain.models.GalleryPost
 import knurl.domain.models.PostMediaItem
 import knurl.domain.models.SortOrder
-import knurl.domain.repositories.InstagramPostRepository
+import knurl.domain.repositories.GalleryRepository
 import knurl.presentation.auth.BearerAuth
 import knurl.presentation.s3.Presigner
 import kotlinx.serialization.Serializable
@@ -52,8 +53,32 @@ data class GalleryItemResponse(
     val clickCount: Int,
 )
 
+/** A gallery's identity and metadata, without its content. */
+@Serializable
+data class GallerySummaryResponse(
+    val id: String,
+    val name: String,
+    /** How many items an admin has curated into this gallery. */
+    val itemCount: Int,
+    /**
+     * How many of those actually have downloaded media and therefore appear in the gallery. Lower
+     * than [itemCount] while ingestion is still fetching a recently-added item.
+     */
+    val publishedCount: Int,
+    val createdAt: String,
+    val updatedAt: String,
+)
+
+@Serializable
+data class GalleryListResponse(
+    val data: List<GallerySummaryResponse>,
+    val pagination: PaginationMeta,
+)
+
 @Serializable
 data class GalleryResponse(
+    /** Which gallery this page came from - echoed so a client following a link knows what it got. */
+    val gallery: GallerySummaryResponse,
     val data: List<GalleryItemResponse>,
     val pagination: PaginationMeta,
 )
@@ -134,45 +159,122 @@ private fun PostMediaItem.toResponse(presigner: Presigner): GalleryMediaItemResp
     )
 }
 
-internal fun InstagramPost.toResponse(presigner: Presigner): GalleryItemResponse =
+/** The counters come from the membership row, so they are this gallery's, not the post's overall. */
+internal fun GalleryPost.toResponse(presigner: Presigner): GalleryItemResponse =
     GalleryItemResponse(
-        id = id.toString(),
-        mediaType = mediaType,
-        caption = caption,
-        permalink = permalink,
-        timestamp = timestamp.toString(),
-        mediaItems = mediaItems.sortedBy { it.position }.map { it.toResponse(presigner) },
+        id = post.id.toString(),
+        mediaType = post.mediaType,
+        caption = post.caption,
+        permalink = post.permalink,
+        timestamp = post.timestamp.toString(),
+        mediaItems = post.mediaItems.sortedBy { it.position }.map { it.toResponse(presigner) },
         viewCount = viewCount,
         clickCount = clickCount,
     )
 
+internal fun Gallery.toResponse(): GallerySummaryResponse =
+    GallerySummaryResponse(
+        id = id.toString(),
+        name = name,
+        itemCount = itemCount,
+        publishedCount = publishedCount,
+        createdAt = createdAt.toString(),
+        updatedAt = updatedAt.toString(),
+    )
+
+private val EXAMPLE_GALLERY =
+    GallerySummaryResponse(
+        id = "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+        name = "Travel",
+        itemCount = 24,
+        publishedCount = 22,
+        createdAt = "2024-01-01T00:00:00Z",
+        updatedAt = "2024-01-02T00:00:00Z",
+    )
+
 /**
- * Public, read-only gallery listing - one presentation-service deployment serves every ingested
+ * Public, read-only gallery surface - one presentation-service deployment serves every ingested
  * account, so `accountId` (public, non-secret Graph API business account id) is a path segment
- * rather than something configured once at startup. `sort` is validated manually (rather than via a
- * typed lens) so an invalid value produces a clear 400 instead of a lens-failure default.
+ * rather than something configured once at startup.
  *
- * Results are paginated into the shared `{ data, pagination }` envelope (see [Pagination.kt]).
- * `limit` and `page` are both silently clamped rather than rejected - `limit` into
- * `1..MAX_PAGE_SIZE`, `page` into `1..totalPages` by [knurl.domain.models.Page.of] - so a client
- * walking off either end of the range still gets a usable page and coherent links.
+ * An account has any number of named galleries and no default one, so content is always addressed
+ * by gallery id. That id is immutable: renaming a gallery never breaks a link already pointing at
+ * it, which is the whole reason the name is not the identity.
+ *
+ * `sort` is validated manually (rather than via a typed lens) so an invalid value produces a clear
+ * 400 instead of a lens-failure default. Results use the shared `{ data, pagination }` envelope
+ * (see [Pagination.kt]); `limit` and `page` are both silently clamped rather than rejected - `limit`
+ * into `1..MAX_PAGE_SIZE`, `page` into `1..totalPages` by [knurl.domain.models.Page.of] - so a
+ * client walking off either end still gets a usable page and coherent links.
  */
 class GalleryRoutes(
-    private val postRepository: InstagramPostRepository,
+    private val galleryRepository: GalleryRepository,
     private val presigner: Presigner,
 ) {
     private val accountIdPath = Path.of("accountId")
+    private val galleryIdPath = Path.of("galleryId")
     private val sortQuery = Query.string().defaulted("sort", "recent")
     private val limitQuery = Query.int().defaulted("limit", 12)
     private val pageQuery = Query.int().defaulted("page", 1)
+    private val galleryListResponseLens = autoBody<GalleryListResponse>().toLens()
     private val galleryResponseLens = autoBody<GalleryResponse>().toLens()
     private val errorResponseLens = autoBody<ErrorResponse>().toLens()
     private val trackRequestLens = autoBody<TrackRequest>().toLens()
     private val trackResponseLens = autoBody<TrackResponse>().toLens()
 
-    private fun listGallery(): ContractRoute =
-        "/api/v1/accounts" / accountIdPath / "gallery" meta {
-            summary = "List a page of gallery posts for an account, sorted by recency or view count"
+    /**
+     * Resolves a `{galleryId}` path segment to one of this account's galleries, or to the response
+     * that should be returned instead.
+     *
+     * A malformed uuid is a 400 rather than a 404 - it is a bad request, not a missing thing, and
+     * binding the raw string straight to a uuid column would surface as a driver exception and a
+     * 500. A well-formed id belonging to another account is a 404, the same as one that does not
+     * exist, so this never confirms the existence of another tenant's gallery.
+     */
+    private fun withGallery(
+        accountId: String,
+        rawGalleryId: String,
+        onFound: (Gallery) -> Response,
+    ): Response {
+        val galleryId =
+            Uuid.parseOrNull(rawGalleryId)
+                ?: return Response(Status.BAD_REQUEST).with(errorResponseLens of ErrorResponse("invalid gallery id"))
+        val gallery =
+            galleryRepository.find(accountId, galleryId)
+                ?: return Response(Status.NOT_FOUND).with(errorResponseLens of ErrorResponse("gallery not found"))
+        return onFound(gallery)
+    }
+
+    private fun listGalleries(): ContractRoute =
+        "/api/v1/accounts" / accountIdPath / "galleries" meta {
+            summary = "List an account's galleries"
+            queries += limitQuery
+            queries += pageQuery
+            returning(
+                Status.OK,
+                galleryListResponseLens to
+                    GalleryListResponse(
+                        listOf(EXAMPLE_GALLERY),
+                        examplePagination("/api/v1/accounts/{accountId}/galleries"),
+                    ),
+            )
+        } bindContract Method.GET to { accountId, _ ->
+            { request ->
+                val pageSize = limitQuery(request).coerceIn(1, MAX_PAGE_SIZE)
+                val page = galleryRepository.findPage(accountId, pageSize, pageQuery(request))
+                Response(Status.OK).with(
+                    galleryListResponseLens of
+                        GalleryListResponse(
+                            data = page.items.map { it.toResponse() },
+                            pagination = paginationMeta(request, page),
+                        ),
+                )
+            }
+        }
+
+    private fun listGalleryContent(): ContractRoute =
+        "/api/v1/accounts" / accountIdPath / "galleries" / galleryIdPath meta {
+            summary = "List a page of one gallery's posts, sorted by recency or view count"
             queries += sortQuery
             queries += limitQuery
             queries += pageQuery
@@ -180,70 +282,83 @@ class GalleryRoutes(
                 Status.OK,
                 galleryResponseLens to
                     GalleryResponse(
+                        EXAMPLE_GALLERY,
                         listOf(EXAMPLE_GALLERY_ITEM),
-                        examplePagination("/api/v1/accounts/{accountId}/gallery"),
+                        examplePagination("/api/v1/accounts/{accountId}/galleries/{galleryId}"),
                     ),
             )
-        } bindContract Method.GET to { accountId, _ ->
+        } bindContract Method.GET to { accountId, _, rawGalleryId ->
             { request ->
-                val sortResult = runCatching { SortOrder.fromQueryParam(sortQuery(request)) }
-                sortResult.fold(
-                    onSuccess = { sort ->
-                        val pageSize = limitQuery(request).coerceIn(1, MAX_PAGE_SIZE)
-                        val page = postRepository.findPage(accountId, sort, pageSize, pageQuery(request))
-                        val body =
-                            GalleryResponse(
-                                data = page.items.map { it.toResponse(presigner) },
-                                pagination = paginationMeta(request, page),
-                            )
-                        Response(Status.OK).with(galleryResponseLens of body)
-                    },
-                    onFailure = {
-                        Response(Status.BAD_REQUEST).with(errorResponseLens of ErrorResponse("invalid sort value"))
-                    },
-                )
+                withGallery(accountId, rawGalleryId) { gallery ->
+                    val sortResult = runCatching { SortOrder.fromQueryParam(sortQuery(request)) }
+                    sortResult.fold(
+                        onSuccess = { sort ->
+                            val pageSize = limitQuery(request).coerceIn(1, MAX_PAGE_SIZE)
+                            val page =
+                                galleryRepository.findContentPage(gallery.id, sort, pageSize, pageQuery(request))
+                            val body =
+                                GalleryResponse(
+                                    gallery = gallery.toResponse(),
+                                    data = page.items.map { it.toResponse(presigner) },
+                                    pagination = paginationMeta(request, page),
+                                )
+                            Response(Status.OK).with(galleryResponseLens of body)
+                        },
+                        onFailure = {
+                            Response(Status.BAD_REQUEST).with(errorResponseLens of ErrorResponse("invalid sort value"))
+                        },
+                    )
+                }
             }
         }
 
+    /**
+     * Counters are per gallery, so the same post tracked from two galleries increments two
+     * independent rows - which is the point: a photo's popularity in one gallery says nothing about
+     * how it performs in another.
+     */
     private fun trackEvent(bearerAuth: BearerAuth): ContractRoute =
-        "/api/v1/accounts" / accountIdPath / "gallery" / "track" meta {
-            summary = "Record a view or click analytics event for a post"
+        "/api/v1/accounts" / accountIdPath / "galleries" / galleryIdPath / "track" meta {
+            summary = "Record a view or click analytics event for a post within a gallery"
             security = bearerAuth.security
-            receiving(trackRequestLens to TrackRequest("id", "view"))
+            receiving(trackRequestLens to TrackRequest("01234567-89ab-cdef-0123-456789abcdef", "view"))
             returning(Status.OK, trackResponseLens to TrackResponse("ok"))
-        } bindContract Method.POST to { accountId, _, _ ->
+        } bindContract Method.POST to { accountId, _, rawGalleryId, _ ->
             { request ->
-                val trackRequest = trackRequestLens(request)
-                val postId = Uuid.parseOrNull(trackRequest.id)
+                withGallery(accountId, rawGalleryId) { gallery ->
+                    val trackRequest = trackRequestLens(request)
+                    val postId = Uuid.parseOrNull(trackRequest.id)
 
-                when {
-                    postId == null -> {
-                        Response(Status.BAD_REQUEST).with(errorResponseLens of ErrorResponse("invalid id"))
-                    }
+                    when {
+                        postId == null -> {
+                            Response(Status.BAD_REQUEST).with(errorResponseLens of ErrorResponse("invalid id"))
+                        }
 
-                    trackRequest.event !in VALID_EVENTS -> {
-                        Response(Status.BAD_REQUEST).with(errorResponseLens of ErrorResponse("invalid event"))
-                    }
+                        trackRequest.event !in VALID_EVENTS -> {
+                            Response(Status.BAD_REQUEST).with(errorResponseLens of ErrorResponse("invalid event"))
+                        }
 
-                    else -> {
-                        // `accountId` scoping here is a defensive tenant check, not required for
-                        // correctness - the UUID alone already uniquely identifies the row - so a
-                        // post UUID belonging to a *different* account cleanly falls through to
-                        // the same "not found" response as a truly-unknown UUID.
-                        val affected =
-                            when (trackRequest.event) {
-                                "view" -> postRepository.incrementViewCount(postId, accountId)
-                                else -> postRepository.incrementClickCount(postId, accountId)
+                        else -> {
+                            // `accountId` scoping here is a defensive tenant check, not required for
+                            // correctness - the gallery id already implies the account - so a post
+                            // UUID belonging to a *different* account cleanly falls through to the
+                            // same "not found" response as a truly-unknown UUID.
+                            val affected =
+                                when (trackRequest.event) {
+                                    "view" -> galleryRepository.incrementViewCount(gallery.id, postId, accountId)
+                                    else -> galleryRepository.incrementClickCount(gallery.id, postId, accountId)
+                                }
+                            if (affected > 0) {
+                                Response(Status.OK).with(trackResponseLens of TrackResponse("ok"))
+                            } else {
+                                Response(Status.NOT_FOUND)
+                                    .with(errorResponseLens of ErrorResponse("post not found in this gallery"))
                             }
-                        if (affected > 0) {
-                            Response(Status.OK).with(trackResponseLens of TrackResponse("ok"))
-                        } else {
-                            Response(Status.NOT_FOUND).with(errorResponseLens of ErrorResponse("post not found"))
                         }
                     }
                 }
             }
         }
 
-    fun routes(bearerAuth: BearerAuth): List<ContractRoute> = listOf(listGallery(), trackEvent(bearerAuth))
+    fun routes(bearerAuth: BearerAuth): List<ContractRoute> = listOf(listGalleries(), listGalleryContent(), trackEvent(bearerAuth))
 }

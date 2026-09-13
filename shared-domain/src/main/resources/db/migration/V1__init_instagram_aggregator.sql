@@ -33,9 +33,8 @@ CREATE TABLE instagram_posts (
     permalink TEXT NOT NULL,
     timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
 
-    -- In-House Analytics Metrics
-    view_count INT NOT NULL DEFAULT 0,
-    click_count INT NOT NULL DEFAULT 0,
+    -- No analytics counters here: a post can belong to several galleries at once, and engagement is
+    -- per-gallery, so `view_count`/`click_count` live on `gallery_items` instead.
 
     -- Retention Controls
     is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
@@ -77,9 +76,9 @@ CREATE TABLE instagram_post_media (
 
 -- 3. Full-feed Media Catalog (metadata only, plus one cheap thumbnail - no large/video S3 paths,
 -- no full download)
--- Populated unconditionally every ingestion cycle for the account's entire media feed. `selected`
--- is the only column an admin API call ever changes; the automatic catalog upsert never touches
--- it, so re-syncing the feed can't clobber a curator's picks.
+-- Populated unconditionally every ingestion cycle for the account's entire media feed. Which items
+-- an admin has actually curated lives in `gallery_items`, not here, so re-syncing the feed can't
+-- clobber a curator's picks - the automatic upsert below touches no column an admin API call owns.
 CREATE TABLE instagram_media_catalog (
     instagram_media_id VARCHAR(100) PRIMARY KEY,
     instagram_account_id VARCHAR(100) NOT NULL REFERENCES instagram_accounts (instagram_account_id),
@@ -88,33 +87,77 @@ CREATE TABLE instagram_media_catalog (
     caption TEXT,
     permalink TEXT NOT NULL,
     timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-    selected BOOLEAN NOT NULL DEFAULT FALSE,
     -- NULL means normal/downloadable. A non-NULL reason code (currently only "copyright") means
     -- ingestion determined the underlying media can never be fetched via the Graph API - e.g.
     -- Instagram permanently omits `media_url` for video/Reels content flagged with copyrighted
-    -- audio. Refreshed on every sync, unlike `selected`, since ingestion is its sole source of truth.
+    -- audio. Refreshed on every sync, unlike gallery membership, since ingestion is its sole source of truth.
     not_digestible_reason VARCHAR(50),
     -- NULL until a thumbnail has been fetched and stored (or the fetch hasn't succeeded yet -
     -- retried every sync cycle, no permanent-failure tracking). Holds the S3 object key, not a
     -- full URL - presentation-service presigns it on read, same convention as
     -- instagram_post_media's paths. Deliberate exception to "no S3 paths" above: one small
-    -- thumbnail object per catalog row, fetched regardless of `selected`, so an admin can browse
+    -- thumbnail object per catalog row, fetched regardless of gallery membership, so an admin can browse
     -- real images before deciding what's worth a full download.
     thumbnail_path TEXT,
-    -- NULL while the item is selected, or was never selected. Stamped when an admin deselects,
-    -- which starts the retention grace period: the `instagram_posts` row and its S3 objects survive
-    -- until `deselected_at + retention_days` (see sync_configurations below), so a reselect inside
-    -- that window costs nothing - the media is still in the bucket and `existingMediaIds` already
-    -- covers it, so ingestion skips the download. Cleared back to NULL on reselect, which is what
-    -- makes a later deselection start a *fresh* countdown rather than resuming the old one.
+    -- NULL while the item belongs to at least one gallery, or never belonged to any. Stamped when
+    -- it leaves its *last* gallery, which starts the retention grace period: the `instagram_posts`
+    -- row and its S3 objects survive until `deselected_at + retention_days` (see
+    -- sync_configurations below), so re-adding it to any gallery inside that window costs nothing -
+    -- the media is still in the bucket and `existingMediaIds` already covers it, so ingestion skips
+    -- the download. Cleared back to NULL on re-add, which is what makes a later removal start a
+    -- *fresh* countdown rather than resuming the old one.
+    --
+    -- This column is a denormalisation of "when did membership last hit zero", maintained by the
+    -- four paths that can change membership (add, remove, gallery delete, purge). Retention does not
+    -- trust it blindly: see the COALESCE onto `instagram_posts.created_at` in findEvictionCandidates,
+    -- which guarantees an item in no gallery is eventually reaped even if a stamp were ever missed.
     deselected_at TIMESTAMP WITH TIME ZONE,
     -- NULL normally. Stamped by DELETE /api/v1/admin/accounts/{id}/catalog/media to mean "skip the
     -- grace period entirely, delete this item's downloaded media on the next ingestion cycle".
     -- A separate column rather than a backdated `deselected_at` sentinel: a retention date of 1970
     -- is a lie the admin UI would have to render, and arming a purge must not silently depend on
-    -- whatever `retention_days` happens to be at the moment of the request. Cleared on reselect.
+    -- whatever `retention_days` happens to be at the moment of the request. Cleared when the item is
+    -- added back to any gallery.
     purge_requested_at TIMESTAMP WITH TIME ZONE,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3b. Galleries
+-- An account curates any number of named galleries over the same catalog, so one piece of content
+-- can appear in several at once. `id` is the immutable identity - it is what public URLs are built
+-- from - while `name` is a human-facing label an admin is free to change at any time without
+-- breaking a single link.
+CREATE TABLE galleries (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    instagram_account_id VARCHAR(100) NOT NULL REFERENCES instagram_accounts (instagram_account_id),
+    name TEXT NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 100),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- No triggers exist anywhere in this schema, so this is written explicitly by the rename
+    -- statement. A column nothing ever writes would be worse than no column at all.
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3c. Gallery Membership
+-- Replaces the old `instagram_media_catalog.selected` boolean. Membership in *any* gallery now does
+-- every job that flag did: it gates the download in `SyncPipeline`, protects a post from the
+-- retention sweep, and - when the last one ends - starts the deletion clock.
+--
+-- Both ON DELETE CASCADEs carry weight. The catalog one is what makes "media vanished from
+-- Instagram => gone from every gallery containing it" a structural property of the schema rather
+-- than something `SyncPipeline.removeVanishedMedia` has to remember to do.
+--
+-- The counters live here, not on `instagram_posts`, because they are genuinely per-gallery: the
+-- same photo's popularity in a "Travel" gallery says nothing about it in "Portfolio", and each
+-- gallery's `sort=views` should reflect its own audience. The corollary is that removing an item
+-- from a gallery discards that gallery's counters for it; re-adding starts from zero.
+CREATE TABLE gallery_items (
+    gallery_id UUID NOT NULL REFERENCES galleries (id) ON DELETE CASCADE,
+    instagram_media_id VARCHAR(100) NOT NULL
+        REFERENCES instagram_media_catalog (instagram_media_id) ON DELETE CASCADE,
+    view_count INT NOT NULL DEFAULT 0,
+    click_count INT NOT NULL DEFAULT 0,
+    added_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (gallery_id, instagram_media_id)
 );
 
 -- 4. Ingestion & Scope Constraints Key-Value Registry
@@ -142,20 +185,41 @@ CREATE TABLE sync_configurations (
 
 -- Create strategic indexes to support fast, low-latency API sorting limits.
 --
--- The composite indexes below are account-scoped AND carry the same trailing tiebreaker column
--- used by InstagramPostRepository.findPage / CatalogRepository.findPage's ORDER BY (`id` /
--- `instagram_media_id`). That tiebreaker is a correctness requirement for offset pagination, not
--- just a performance one: `timestamp`/`view_count` alone are not unique, and paging over a
--- partial order lets the same row appear on two pages (or on neither). A composite index's
--- leading column already serves any plain account-only equality lookup (e.g. existingMediaIds,
--- selectedMediaIds, mediaIdsNeedingThumbnail), so no separate single-column account index is kept.
+-- Every paginated index below carries the same trailing tiebreaker column used by its query's
+-- ORDER BY. That tiebreaker is a correctness requirement for offset pagination, not just a
+-- performance one: `timestamp`/`view_count` alone are not unique, and paging over a partial order
+-- lets the same row appear on two pages (or on neither).
+--
+-- `idx_posts_account_timestamp`'s `timestamp DESC, id` tail no longer drives a page - gallery
+-- content is paged off `gallery_items` now - but the index stays for its leading column, which
+-- serves every account-only equality lookup over posts (existingMediaIds, findEvictionCandidates,
+-- countOrphanedPosts, deleteVanished).
 CREATE INDEX idx_posts_account_timestamp ON instagram_posts (instagram_account_id, timestamp DESC, id);
-CREATE INDEX idx_posts_account_view_count ON instagram_posts (instagram_account_id, view_count DESC, id);
 CREATE INDEX idx_post_media_post_id ON instagram_post_media (post_id);
-CREATE INDEX idx_catalog_selected ON instagram_media_catalog (selected);
--- Partial indexes: both columns are NULL for the overwhelming majority of rows (an item is
--- normally either selected or was never selected), so these stay tiny while still letting the
--- retention sweep find the handful of rows on a deletion clock without a full catalog scan.
+
+-- Names are the admin's handle on a gallery, so two that differ only by case or padding would be
+-- indistinguishable in a picker. This has to be a CREATE UNIQUE INDEX rather than a table-level
+-- UNIQUE constraint: Postgres accepts only bare column names in the latter, so `UNIQUE
+-- (instagram_account_id, lower(btrim(name)))` is a syntax error. Its leading column doubles as the
+-- account scan for GET /api/v1/accounts/{accountId}/galleries.
+CREATE UNIQUE INDEX uq_galleries_account_name ON galleries (instagram_account_id, lower(btrim(name)));
+
+-- Postgres does not auto-index the referencing side of a foreign key, and this particular side is
+-- probed constantly: the "is this post in any gallery?" semi-join (once per eviction candidate per
+-- cycle, and again as the download gate), the "are there memberships left?" check on every removal,
+-- the admin catalog's gallery filters, and the ON DELETE CASCADE that deleteVanished fires once per
+-- deleted catalog row. Without this index all four fall back to sequential scans of gallery_items.
+CREATE INDEX idx_gallery_items_media ON gallery_items (instagram_media_id);
+
+-- Serves `ORDER BY gi.view_count DESC, gi.instagram_media_id` for a gallery's sort=views. The
+-- tiebreaker is the media id rather than the post id precisely so this index can serve the whole
+-- ordering: within a fixed gallery_id it is unique (it is the other half of the primary key), so it
+-- is a valid total order. The PK itself covers the gallery content scan and item counts.
+CREATE INDEX idx_gallery_items_views ON gallery_items (gallery_id, view_count DESC, instagram_media_id);
+
+-- Partial indexes: both columns are NULL for the overwhelming majority of rows (an item normally
+-- either belongs to a gallery or never did), so these stay tiny while still letting the retention
+-- sweep find the handful of rows on a deletion clock without a full catalog scan.
 CREATE INDEX idx_catalog_deselected_at ON instagram_media_catalog (deselected_at) WHERE deselected_at IS NOT NULL;
 CREATE INDEX idx_catalog_purge_requested ON instagram_media_catalog (purge_requested_at) WHERE purge_requested_at IS NOT NULL;
 CREATE INDEX idx_catalog_account_timestamp ON instagram_media_catalog (instagram_account_id, timestamp DESC, instagram_media_id);

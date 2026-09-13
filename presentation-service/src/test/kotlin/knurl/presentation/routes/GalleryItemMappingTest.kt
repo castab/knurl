@@ -8,6 +8,7 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
 import knurl.domain.config.S3Settings
+import knurl.domain.models.GalleryPost
 import knurl.domain.models.InstagramPost
 import knurl.domain.models.PostMediaItem
 import knurl.presentation.s3.Presigner
@@ -59,17 +60,23 @@ private fun testMediaItem(
  * derived from an item, so every test below can rely on it never leaking back into
  * [GalleryMediaItemResponse.mediaType], which must always carry that item's own value.
  */
-private fun testPost(mediaItems: List<PostMediaItem>): InstagramPost {
+private fun testPost(mediaItems: List<PostMediaItem>): GalleryPost {
     val postId = mediaItems.firstOrNull()?.postId ?: Uuid.random()
-    return InstagramPost(
-        id = postId,
-        instagramAccountId = "account-1",
-        instagramMediaId = "media-1",
-        mediaType = if (mediaItems.size > 1) "CAROUSEL_ALBUM" else mediaItems.single().mediaType,
-        caption = "a caption",
-        permalink = "https://www.instagram.com/p/abc/",
-        timestamp = Instant.parse("2024-01-01T00:00:00Z"),
-        mediaItems = mediaItems,
+    return GalleryPost(
+        galleryId = Uuid.random(),
+        post =
+            InstagramPost(
+                id = postId,
+                instagramAccountId = "account-1",
+                instagramMediaId = "media-1",
+                mediaType = if (mediaItems.size > 1) "CAROUSEL_ALBUM" else mediaItems.single().mediaType,
+                caption = "a caption",
+                permalink = "https://www.instagram.com/p/abc/",
+                timestamp = Instant.parse("2024-01-01T00:00:00Z"),
+                mediaItems = mediaItems,
+            ),
+        viewCount = 0,
+        clickCount = 0,
     )
 }
 
@@ -161,7 +168,7 @@ class GalleryItemMappingTest :
                     testMediaItem(postId, position = 2),
                 )
             val post = testPost(items)
-            post.mediaType shouldBe "CAROUSEL_ALBUM"
+            post.post.mediaType shouldBe "CAROUSEL_ALBUM"
 
             val response = post.toResponse(testPresigner())
 

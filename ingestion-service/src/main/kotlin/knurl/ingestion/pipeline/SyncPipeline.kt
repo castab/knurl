@@ -7,6 +7,7 @@ import knurl.domain.models.InstagramPostUpsert
 import knurl.domain.models.PostMediaItemUpsert
 import knurl.domain.repositories.AuthConfigRepository
 import knurl.domain.repositories.CatalogRepository
+import knurl.domain.repositories.GalleryRepository
 import knurl.domain.repositories.InstagramPostRepository
 import knurl.domain.repositories.SyncConfigurationRepository
 import knurl.ingestion.client.MediaChild
@@ -79,7 +80,7 @@ private const val MEDIA_URL_LIKELY_PERMANENT_THRESHOLD_HOURS = 6L
  * once a child has been missing `media_url`/`thumbnail_url` for long enough that it's far more likely
  * Meta's permanent copyrighted-audio omission (see the `media_url` field docs on Meta's IG Media
  * reference) than the video still being processed - stored on the catalog row so the admin browse UI
- * can surface it even before the item is ever selected. Pure/no I/O so it's unit-testable on its own.
+ * can surface it even before the item is ever put in a gallery. Pure/no I/O so it's unit-testable on its own.
  */
 fun notDigestibleReason(item: MediaItem): String? {
     val notReady =
@@ -112,21 +113,21 @@ fun retentionCutoff(
 ): Instant = now.minus(retentionDays.toLong(), ChronoUnit.DAYS)
 
 /**
- * Whether a catalog item's media should be downloaded this cycle: it must be admin-selected, and
- * must not already have been downloaded.
+ * Whether a catalog item's media should be downloaded this cycle: at least one of the account's
+ * galleries must hold it, and it must not already have been downloaded.
  *
- * The second half is what makes reselecting an item inside its retention grace period free. The
- * post row survives that whole window, so the item is still in [existingIds] and no re-download
- * happens - it simply reappears in the gallery. Only once retention has actually deleted the row
- * does a reselect fetch the media again. Pure/no I/O so it's unit-testable on its own, and factored
+ * The second half is what makes re-adding an item to a gallery inside its retention grace period
+ * free. The post row survives that whole window, so the item is still in [existingIds] and no
+ * re-download happens - it simply reappears. Only once retention has actually deleted the row does
+ * adding it back fetch the media again. Pure/no I/O so it's unit-testable on its own, and factored
  * out precisely because that behaviour is emergent from this condition rather than stated anywhere
  * explicitly - inlined, it would be easy to "simplify" away.
  */
 fun shouldDownload(
     mediaId: String,
-    selectedIds: Set<String>,
+    galleryMemberIds: Set<String>,
     existingIds: Set<String>,
-): Boolean = mediaId in selectedIds && mediaId !in existingIds
+): Boolean = mediaId in galleryMemberIds && mediaId !in existingIds
 
 /**
  * Below this many vanished items, [shouldSkipVanishedRemoval] never refuses to act, however large a
@@ -189,15 +190,15 @@ fun thumbnailSourceUrl(item: MediaItem): String? {
 /**
  * Orchestrates one ingestion cycle: refresh the Graph API token if it's close to expiring, sync the
  * account's entire media feed into the catalog (metadata only) while additionally downloading and
- * storing any catalog item that's both admin-`selected` and not yet in `instagram_posts`, remove
+ * storing any catalog item that belongs to a gallery and is not yet in `instagram_posts`, remove
  * any catalog entry (and downloaded post) for media Instagram's feed no longer returned this cycle,
  * then run the retention sweep that deletes the media of items deselected longer ago than
  * `retention_days` (or explicitly purge-requested by an admin).
  *
  * Every paginated feed item is upserted into `instagram_media_catalog` unconditionally, regardless
  * of selection state - this is what powers the admin browse-and-select API in presentation-service.
- * Selection itself (`instagram_media_catalog.selected`) is never touched here; it's exclusively
- * set/cleared via `PATCH /api/v1/admin/accounts/{accountId}/catalog/selections`.
+ * Gallery membership itself is never touched here; it's exclusively set/cleared via
+ * `PATCH /api/v1/admin/accounts/{accountId}/galleries/{galleryId}/items`.
  *
  * "Vanished" removal (see [removeVanishedMedia]) is a distinct kind of deletion from retention: it
  * fires when Instagram itself is the one saying an item no longer exists, so unlike deselection
@@ -208,6 +209,7 @@ class SyncPipeline(
     private val authConfigRepository: AuthConfigRepository,
     private val postRepository: InstagramPostRepository,
     private val catalogRepository: CatalogRepository,
+    private val galleryRepository: GalleryRepository,
     private val syncConfigurationRepository: SyncConfigurationRepository,
     private val metaGraphClient: MetaGraphClient,
     private val mediaProcessor: MediaProcessor,
@@ -255,14 +257,14 @@ class SyncPipeline(
      */
     private suspend fun syncCatalogAndSelectedMedia(accessToken: String): Set<String> {
         val existingIds = postRepository.existingMediaIds(targetUserId)
-        val selectedIds = catalogRepository.selectedMediaIds(targetUserId)
+        val galleryMemberIds = catalogRepository.mediaIdsInAnyGallery(targetUserId)
         val syncedItems = mutableListOf<MediaItem>()
         var cursor: String? = null
 
         do {
             val page = metaGraphClient.fetchMediaList(targetUserId, accessToken, cursor)
             page.data.forEach { item ->
-                syncCatalogEntry(item, selectedIds, existingIds)
+                syncCatalogEntry(item, galleryMemberIds, existingIds)
                 syncedItems += item
             }
             cursor = page.paging?.next?.let { nextUrl -> runCatching { nextUrl.toHttpUrl().queryParameter("after") }.getOrNull() }
@@ -306,10 +308,10 @@ class SyncPipeline(
         catalogRepository.updateThumbnailPath(item.id, key)
     }
 
-    /** Upserts catalog metadata unconditionally, then downloads/stores the media if it's selected and not already synced. */
+    /** Upserts catalog metadata unconditionally, then downloads/stores the media if a gallery holds it and it isn't already synced. */
     private fun syncCatalogEntry(
         item: MediaItem,
-        selectedIds: Set<String>,
+        galleryMemberIds: Set<String>,
         existingIds: Set<String>,
     ) {
         val shortcode = extractShortcode(item.permalink)
@@ -340,7 +342,7 @@ class SyncPipeline(
             ),
         )
 
-        if (shouldDownload(item.id, selectedIds, existingIds)) {
+        if (shouldDownload(item.id, galleryMemberIds, existingIds)) {
             runCatching { processAndStore(item) }
                 .onFailure { log.error("Failed to process media ${item.id}", it) }
         }
@@ -487,12 +489,24 @@ class SyncPipeline(
             return
         }
 
+        // Read before the delete: the catalog rows about to go cascade gallery_items away with them,
+        // so afterwards there is nothing left to ask which galleries were affected.
+        val affectedGalleries = galleryRepository.galleryNamesHolding(targetUserId, vanishedIds)
+
         val candidates = postRepository.deleteVanished(targetUserId, vanishedIds)
         log.info(
             "Removed ${vanishedIds.size} catalog entr${if (vanishedIds.size == 1) "y" else "ies"} no longer " +
                 "on Instagram for $targetUserId (${candidates.size} had downloaded media, now deleted from " +
-                "the gallery and the bucket)",
+                "every gallery holding them and from the bucket)",
         )
+        if (affectedGalleries.isNotEmpty()) {
+            // Worth its own line at WARN: an admin curated these by hand, and from their side an item
+            // simply disappeared from a gallery without anyone asking for it.
+            log.warn(
+                "Media that vanished from Instagram was removed from ${affectedGalleries.size} curated " +
+                    "galler${if (affectedGalleries.size == 1) "y" else "ies"}: $affectedGalleries",
+            )
+        }
 
         candidates.forEach { candidate ->
             if (candidate.mediaPaths.isEmpty()) {
@@ -527,7 +541,7 @@ class SyncPipeline(
         if (orphanedPosts > 0) {
             log.warn(
                 "$orphanedPosts post(s) for $targetUserId have no catalog row: they can never be shown " +
-                    "(the gallery filters on `selected`) nor reaped (retention joins the catalog), so their " +
+                    "(a gallery holds catalog items) nor reaped (retention joins the catalog), so their " +
                     "S3 objects are held indefinitely. This should be unreachable - investigate.",
             )
         }
@@ -553,8 +567,8 @@ class SyncPipeline(
         // The row delete re-checks selection, so a reselect landing between findEvictionCandidates
         // and here wins: 0 rows means the item is live again and its objects must survive. Bailing
         // out before touching S3 is the whole reason this ordering is row-first.
-        if (postRepository.deleteIfNotSelected(candidate.id) == 0) {
-            log.info("Eviction candidate ${candidate.id} was reselected mid-cycle; keeping its media")
+        if (postRepository.deleteIfNotInAnyGallery(candidate.id) == 0) {
+            log.info("Eviction candidate ${candidate.id} was added back to a gallery mid-cycle; keeping its media")
             return
         }
 
