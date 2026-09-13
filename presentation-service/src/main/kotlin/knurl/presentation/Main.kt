@@ -5,9 +5,10 @@ import com.sksamuel.hoplite.PropertySource
 import knurl.domain.config.DatabaseConfig
 import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.CatalogRepository
-import knurl.domain.repositories.InstagramPostRepository
+import knurl.domain.repositories.GalleryRepository
 import knurl.presentation.auth.BearerAuth
 import knurl.presentation.routes.AdminCatalogRoutes
+import knurl.presentation.routes.AdminGalleryRoutes
 import knurl.presentation.routes.GalleryRoutes
 import knurl.presentation.s3.Presigner
 import org.http4k.contract.contract
@@ -30,10 +31,11 @@ import java.time.Duration
  * Plain `fun main()` entrypoint - no application framework. Everything below is manually
  * constructed and wired by hand; http4k is used purely as a functional HTTP toolkit.
  *
- * Architectural boundary: this service issues zero database writes other than the two analytics
- * counters in POST /api/v1/accounts/{accountId}/gallery/track and the `selected` flag toggled by
- * PATCH /api/v1/admin/accounts/{accountId}/catalog/selections. It never runs Flyway migrations
- * (ingestion-service owns the schema) and never calls the Meta Graph API.
+ * Architectural boundary: this service's database writes are bounded to the per-gallery analytics
+ * counters (POST .../galleries/{galleryId}/track), the gallery CRUD and membership under
+ * /api/v1/admin/accounts/{accountId}/galleries, and the deletion clock those maintain. Crucially it
+ * issues no S3 call beyond presigning reads - every byte deletion stays ingestion-service's job. It
+ * never runs Flyway migrations (ingestion-service owns the schema) and never calls the Meta Graph API.
  *
  * This is a genuinely multi-tenant deployment: one process serves every ingested Instagram
  * account, each identified by its (public, non-secret) account id in the URL path. Compare
@@ -56,13 +58,14 @@ fun main() {
     val dataSource = DatabaseConfig.createDataSource(config.database)
     val jdbi = DatabaseConfig.createJdbi(dataSource)
     val accountRepository = AccountRepository(jdbi)
-    val postRepository = InstagramPostRepository(jdbi)
+    val galleryRepository = GalleryRepository(jdbi)
     val catalogRepository = CatalogRepository(jdbi)
 
     val presigner = Presigner.create(config.s3, Duration.ofSeconds(config.presignedGetTtlSeconds))
     val bearerAuth = BearerAuth(config.apiBearerToken)
-    val galleryRoutes = GalleryRoutes(postRepository, presigner)
+    val galleryRoutes = GalleryRoutes(galleryRepository, presigner)
     val adminCatalogRoutes = AdminCatalogRoutes(catalogRepository, accountRepository, presigner)
+    val adminGalleryRoutes = AdminGalleryRoutes(galleryRepository, accountRepository)
 
     val app =
         contract {
@@ -73,6 +76,7 @@ fun main() {
             descriptionPath = "/openapi.json"
             routes += galleryRoutes.routes(bearerAuth)
             routes += adminCatalogRoutes.routes()
+            routes += adminGalleryRoutes.routes()
         }
     val docs = "/docs" bind swaggerUiLite { url = "/openapi.json" }
     val routedApp =

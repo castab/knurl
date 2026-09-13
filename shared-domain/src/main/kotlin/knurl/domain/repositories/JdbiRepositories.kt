@@ -3,15 +3,12 @@ package knurl.domain.repositories
 import knurl.domain.models.AuthConfig
 import knurl.domain.models.CatalogEntry
 import knurl.domain.models.CatalogFilter
-import knurl.domain.models.CatalogSelectionResult
 import knurl.domain.models.CatalogUpsert
 import knurl.domain.models.EvictionCandidate
-import knurl.domain.models.InstagramPost
 import knurl.domain.models.InstagramPostUpsert
 import knurl.domain.models.Page
 import knurl.domain.models.PostMediaItem
 import knurl.domain.models.PurgeRequestResult
-import knurl.domain.models.SortOrder
 import org.jdbi.v3.core.Jdbi
 import org.jdbi.v3.core.kotlin.bindKotlin
 import org.jdbi.v3.core.kotlin.mapTo
@@ -87,37 +84,6 @@ class AuthConfigRepository(
     }
 }
 
-/** Raw `instagram_posts` row shape - mirrors the table exactly, unlike [InstagramPost] which also carries [PostMediaItem]s from a separate table/query. */
-private data class InstagramPostRow(
-    val id: Uuid,
-    val instagramAccountId: String,
-    val instagramMediaId: String,
-    val mediaType: String,
-    val caption: String?,
-    val permalink: String,
-    val timestamp: Instant,
-    val viewCount: Int,
-    val clickCount: Int,
-    val isPinned: Boolean,
-    val createdAt: Instant,
-) {
-    fun toDomain(mediaItems: List<PostMediaItem>): InstagramPost =
-        InstagramPost(
-            id = id,
-            instagramAccountId = instagramAccountId,
-            instagramMediaId = instagramMediaId,
-            mediaType = mediaType,
-            caption = caption,
-            permalink = permalink,
-            timestamp = timestamp,
-            mediaItems = mediaItems,
-            viewCount = viewCount,
-            clickCount = clickCount,
-            isPinned = isPinned,
-            createdAt = createdAt,
-        )
-}
-
 /** One row of `instagram_post_media`, scoped down to just the S3 paths needed for eviction's S3 delete. */
 private data class MediaPathsRow(
     val postId: Uuid,
@@ -132,23 +98,29 @@ private data class MediaPathsRow(
  * inside a composite row, which is how every other `Uuid` column in this file is already mapped)
  * - wrapping it in a one-field data class sidesteps that and reuses the already-working path.
  */
-private data class UuidRow(
+internal data class UuidRow(
     val id: Uuid,
 )
 
 /**
- * Semi-join predicate: "this post's catalog row is still admin-selected". Expects the
- * `instagram_posts` row to be aliased `p`.
+ * Semi-join predicate: "this post belongs to at least one gallery". Expects the `instagram_posts`
+ * row to be aliased `p`.
  *
- * Shared verbatim between the gallery page query and the retention sweep because they are two
- * halves of one rule - a post is visible exactly while it is selected, and becomes eligible for
- * deletion exactly when it stops being. Writing the condition once means the two can never drift
- * into a state where something is invisible but also never reaped, or reaped while still on show.
+ * This is the successor to the old `selected` flag, and it inherits every job that flag did: it
+ * gates the download in `SyncPipeline`, it protects a post from the retention sweep, and its going
+ * false is what starts the deletion clock.
+ *
+ * Note what it deliberately is *not*. With one implicit gallery, visibility and reapability were
+ * the same predicate, and a shared constant was what guaranteed they could never disagree. That is
+ * no longer true: visibility is now per-gallery (`gi.gallery_id = :galleryId`) while reapability is
+ * any-gallery, so "invisible in gallery X but correctly not reaped" is an ordinary, intended state.
+ * This constant is shared only between [InstagramPostRepository.findEvictionCandidates] and
+ * [InstagramPostRepository.deleteIfNotInAnyGallery], which really are two halves of one rule.
  */
-private const val SELECTED_IN_CATALOG =
+private const val IN_ANY_GALLERY =
     """EXISTS (
-           SELECT 1 FROM instagram_media_catalog c
-           WHERE c.instagram_media_id = p.instagram_media_id AND c.selected = TRUE
+           SELECT 1 FROM gallery_items gi
+           WHERE gi.instagram_media_id = p.instagram_media_id
        )"""
 
 class InstagramPostRepository(
@@ -168,87 +140,6 @@ class InstagramPostRepository(
                 .mapTo<String>()
                 .toSet()
         }
-
-    /**
-     * One page of an account's posts, plus the total number of posts it has, for offset pagination.
-     *
-     * Sort column is selected via a fixed enum->literal mapping, never interpolated from
-     * unvalidated client input, to avoid SQL injection through the `sort` query parameter. Both
-     * orderings carry `id` as a tiebreaker: `timestamp`/`view_count` alone are not unique, and
-     * without a total order Postgres is free to return a tied row on two different pages (or on
-     * neither) - the same reasoning that already applies to [findEvictionCandidates].
-     *
-     * Only posts whose catalog row is still `selected` are returned. A deselected post keeps its
-     * row and its S3 objects for the retention grace period so the decision stays reversible for
-     * free, but it must leave the gallery the moment it is deselected - so visibility is derived
-     * from `selected` here rather than from the mere existence of a post row. The same semi-join
-     * shape as [findEvictionCandidates]'s, and it is applied to the `COUNT(*)` as well as the row
-     * query: a total that described a different set of rows than the page it accompanies would be
-     * worse than no total at all.
-     *
-     * The `COUNT(*)` and the row query share one handle (one pooled connection, not two). They are
-     * not wrapped in a transaction: a concurrent ingestion cycle could in principle land a post
-     * between them, which at worst shifts one row across a page boundary. That is not worth
-     * holding a transaction open for on a read-only endpoint.
-     *
-     * Media items are fetched in one batched follow-up query (not per-post) to avoid N+1.
-     */
-    fun findPage(
-        accountId: String,
-        sort: SortOrder,
-        pageSize: Int,
-        page: Int,
-    ): Page<InstagramPost> {
-        val orderByClause =
-            when (sort) {
-                SortOrder.RECENT -> "p.timestamp DESC, p.id"
-                SortOrder.VIEWS -> "p.view_count DESC, p.id"
-            }
-
-        return jdbi.withHandle<Page<InstagramPost>, Exception> { handle ->
-            val totalRecords =
-                handle
-                    .createQuery(
-                        """
-                        SELECT COUNT(*) FROM instagram_posts p
-                        WHERE p.instagram_account_id = :accountId AND $SELECTED_IN_CATALOG
-                        """.trimIndent(),
-                    ).bind("accountId", accountId)
-                    .mapTo<Int>()
-                    .one()
-
-            Page.of(totalRecords, pageSize, page) { offset ->
-                val posts =
-                    handle
-                        .createQuery(
-                            """
-                            SELECT p.* FROM instagram_posts p
-                            WHERE p.instagram_account_id = :accountId AND $SELECTED_IN_CATALOG
-                            ORDER BY $orderByClause
-                            LIMIT :limit OFFSET :offset
-                            """.trimIndent(),
-                        ).bind("accountId", accountId)
-                        .bind("limit", pageSize)
-                        .bind("offset", offset)
-                        .mapTo<InstagramPostRow>()
-                        .list()
-
-                if (posts.isEmpty()) {
-                    emptyList()
-                } else {
-                    val mediaByPost =
-                        handle
-                            .createQuery("SELECT * FROM instagram_post_media WHERE post_id IN (<ids>) ORDER BY position")
-                            .bindList("ids", posts.map { it.id })
-                            .mapTo<PostMediaItem>()
-                            .list()
-                            .groupBy { it.postId }
-
-                    posts.map { it.toDomain(mediaByPost[it.id].orEmpty()) }
-                }
-            }
-        }
-    }
 
     /**
      * `id` and `created_at` are deliberately absent from the insert column list, leaving them to
@@ -334,49 +225,28 @@ class InstagramPostRepository(
     }
 
     /**
-     * `accountId` scoping here isn't required for correctness (the UUID alone already uniquely
-     * identifies the row) - it's a defensive tenant check, so a track call carrying a UUID that
-     * belongs to a *different* account returns the same "0 rows affected" the caller already
-     * treats as "post not found", rather than silently succeeding across a tenant boundary.
-     */
-    fun incrementViewCount(
-        id: Uuid,
-        accountId: String,
-    ): Int =
-        jdbi.withHandle<Int, Exception> { handle ->
-            handle
-                .createUpdate(
-                    "UPDATE instagram_posts SET view_count = view_count + 1 WHERE id = :id AND instagram_account_id = :accountId",
-                ).bind("id", id)
-                .bind("accountId", accountId)
-                .execute()
-        }
-
-    fun incrementClickCount(
-        id: Uuid,
-        accountId: String,
-    ): Int =
-        jdbi.withHandle<Int, Exception> { handle ->
-            handle
-                .createUpdate(
-                    "UPDATE instagram_posts SET click_count = click_count + 1 WHERE id = :id AND instagram_account_id = :accountId",
-                ).bind("id", id)
-                .bind("accountId", accountId)
-                .execute()
-        }
-
-    /**
-     * Posts whose downloaded media is now due for deletion: deselected long enough ago that the
-     * retention grace period has elapsed, or explicitly purge-requested by an admin.
+     * Posts whose downloaded media is now due for deletion: out of every gallery for longer than
+     * the retention grace period, or explicitly purge-requested by an admin.
      *
-     * The grace period exists so deselection is reversible for free - within the window the media
-     * is still in the bucket, so a reselect costs no re-download (`existingMediaIds` still covers
-     * the item and `SyncPipeline` skips it). Reselecting clears both timestamps, which is what makes
-     * a reselected item ineligible here and restarts the countdown from scratch on a later
-     * deselection rather than resuming the old one.
+     * The grace period exists so removing an item from a gallery is reversible for free - within the
+     * window the media is still in the bucket, so adding it back costs no re-download
+     * (`existingMediaIds` still covers it and `SyncPipeline` skips it). Re-adding clears both
+     * timestamps, which is what makes the item ineligible here and restarts the countdown from
+     * scratch on a later removal rather than resuming the old one.
      *
-     * `selected = FALSE` is required regardless of which clock fired: evicting a still-selected post
-     * would only have `SyncPipeline` re-download it next cycle, an unbounded download/delete loop.
+     * Belonging to no gallery is required regardless of which clock fired: evicting a post that is
+     * still in one would only have `SyncPipeline` re-download it next cycle, an unbounded
+     * download/delete loop.
+     *
+     * **The `COALESCE(c.deselected_at, p.created_at)` is a deliberate backstop, not a convenience.**
+     * `deselected_at` is a denormalisation maintained by four separate membership-mutating paths,
+     * and the failure mode that matters is an item ending up in zero galleries with the stamp
+     * missed: it would then be invisible in every gallery *and* permanently unreapable, holding its
+     * bytes forever with nothing to detect it (`ObjectKeyRepository.allKnownKeys` still covers those
+     * objects, so the orphan sweeper leaves them alone by design). Falling back to the post's own
+     * creation time makes "in no gallery" *sufficient* for eventual reaping however the clock was
+     * maintained. The cost is honest: in that case the item loses its grace period and goes on the
+     * next cycle instead of in 30 days - far better than never.
      *
      * [is_pinned][knurl.domain.models.InstagramPost.isPinned] defeats the ordinary time-based sweep,
      * but **not an explicit purge request**. A pin is a passive "retention must not reap this"
@@ -385,7 +255,7 @@ class InstagramPostRepository(
      *
      * Scoped to one account so retention is computed within that account's own pool, never blended
      * with another account's posts sharing this database. Media paths (for the S3 delete that
-     * follows the row delete) are fetched in one batched follow-up query, same pattern as [findPage].
+     * follows the row delete) are fetched in one batched follow-up query.
      *
      * Note the INNER JOIN: a post with no catalog row at all is neither shown nor reaped. That
      * should be unreachable - the catalog is upserted for every feed item on every cycle - but
@@ -404,10 +274,10 @@ class InstagramPostRepository(
                         FROM instagram_posts p
                         JOIN instagram_media_catalog c ON c.instagram_media_id = p.instagram_media_id
                         WHERE p.instagram_account_id = :accountId
-                          AND c.selected = FALSE
+                          AND NOT $IN_ANY_GALLERY
                           AND (
                                 c.purge_requested_at IS NOT NULL
-                                OR (c.deselected_at IS NOT NULL AND c.deselected_at < :deselectedBefore)
+                                OR COALESCE(c.deselected_at, p.created_at) < :deselectedBefore
                               )
                           AND (p.is_pinned = FALSE OR c.purge_requested_at IS NOT NULL)
                         """.trimIndent(),
@@ -435,26 +305,28 @@ class InstagramPostRepository(
         }
 
     /**
-     * Deletes a post **unless it has been reselected since it was chosen for eviction**, returning
-     * the number of rows affected (1 = deleted, 0 = reselected, leave its S3 objects alone).
+     * Deletes a post **unless it was added back to some gallery since it was chosen for eviction**,
+     * returning the number of rows affected (1 = deleted, 0 = live again, leave its S3 objects
+     * alone).
      *
-     * The guard is not redundant with [findEvictionCandidates]'s own `selected = FALSE` filter.
-     * That query snapshots the candidate list at the top of the sweep, and candidates then drain
-     * through a concurrency semaphore - an admin reselecting in that gap would otherwise have the
-     * media deleted out from under a post that is once again live, costing a full re-download and
-     * leaving a gallery gap until the next cycle. Doing the re-check inside the DELETE itself makes
-     * eviction atomic with respect to a reselect, which no amount of re-reading beforehand can.
+     * The guard is not redundant with [findEvictionCandidates]'s own membership filter. That query
+     * snapshots the candidate list at the top of the sweep, and candidates then drain through a
+     * concurrency semaphore - an admin adding the item to a gallery in that gap would otherwise have
+     * the media deleted out from under a post that is once again live, costing a full re-download
+     * and leaving a gap in that gallery until the next cycle. Doing the re-check inside the DELETE
+     * itself makes eviction atomic with respect to that add, which no amount of re-reading
+     * beforehand can.
      *
      * Named for the guard rather than `deleteById` so a later caller cannot assume an unconditional
      * delete and quietly drop it. `instagram_post_media` rows go via ON DELETE CASCADE.
      */
-    fun deleteIfNotSelected(id: Uuid): Int =
+    fun deleteIfNotInAnyGallery(id: Uuid): Int =
         jdbi.withHandle<Int, Exception> { handle ->
             handle
                 .createUpdate(
                     """
                     DELETE FROM instagram_posts p
-                    WHERE p.id = :id AND NOT $SELECTED_IN_CATALOG
+                    WHERE p.id = :id AND NOT $IN_ANY_GALLERY
                     """.trimIndent(),
                 ).bind("id", id)
                 .execute()
@@ -467,7 +339,7 @@ class InstagramPostRepository(
      * successful pagination sweep. Returns an [EvictionCandidate] per post that existed, so the
      * caller can delete its S3 objects the same way retention eviction does.
      *
-     * Unconditional, unlike [deleteIfNotSelected]: there is no reselect race to protect against
+     * Unconditional, unlike [deleteIfNotInAnyGallery]: there is no re-add race to protect against
      * here, because reselecting an item Instagram itself no longer serves cannot bring it back - the
      * next sync would simply fail to find it in the feed again. `selected` and `is_pinned` are both
      * overridden for the same reason: they express a preference for keeping content Instagram still
@@ -543,7 +415,7 @@ class InstagramPostRepository(
 
     /**
      * Posts for this account with no `instagram_media_catalog` row at all. Such a post can never be
-     * shown (the gallery filters on `selected`) nor reaped (retention joins the catalog), so it
+     * shown (a gallery holds catalog items) nor reaped (retention joins the catalog), so it
      * would occupy bucket space forever while being invisible. It should be unreachable; this
      * exists purely so `SyncPipeline` can warn instead of leaking in silence.
      */
@@ -659,29 +531,59 @@ class SyncConfigurationRepository(
  * `""` for an unrestricted filter. Paired with [bindCatalogFilter], which supplies the parameters
  * this fragment references; every query using one must use the other.
  *
- * Nothing here interpolates a client-supplied value. The `selected` and `not_digestible_reason`
- * clauses are fixed literals chosen by a type-safe `when`, and media types appear only as a JDBI
- * `<mediaTypes>` list-binding placeholder expanded into real bind parameters. An empty
+ * Nothing here interpolates a client-supplied value. The membership and `not_digestible_reason`
+ * clauses are fixed literals chosen by a type-safe `when`, and the gallery id and media types
+ * appear only as bind parameters / a JDBI `<mediaTypes>` list-binding placeholder. An empty
  * [CatalogFilter.mediaTypes] omits that clause entirely - it means "no restriction", and JDBI
  * rejects an empty `bindList` regardless.
+ *
+ * The membership clauses fully qualify `instagram_media_catalog.instagram_media_id` rather than
+ * relying on a bare column name: they are correlated subqueries over `gallery_items`, and the
+ * queries these fragments are spliced into give the catalog table no alias.
  */
 private fun catalogFilterClause(filter: CatalogFilter): String =
     buildString {
-        when (filter.selected) {
+        if (filter.galleryId != null) {
+            append(
+                " AND EXISTS (SELECT 1 FROM gallery_items gi" +
+                    " WHERE gi.instagram_media_id = instagram_media_catalog.instagram_media_id" +
+                    " AND gi.gallery_id = :galleryId)",
+            )
+        }
+        when (filter.inAnyGallery) {
             null -> Unit
-            true -> append(" AND selected = TRUE")
-            false -> append(" AND selected = FALSE")
+            true -> append(ANY_GALLERY_MEMBERSHIP_CLAUSE)
+            false -> append(" AND NOT$ANY_GALLERY_MEMBERSHIP_CLAUSE_BODY")
         }
         if (!filter.includeNotDigestible) append(" AND not_digestible_reason IS NULL")
         if (filter.mediaTypes.isNotEmpty()) append(" AND media_type IN (<mediaTypes>)")
     }
 
-/** Binds the parameters referenced by [catalogFilterClause]; see there for why only media types need binding. */
-private fun Query.bindCatalogFilter(filter: CatalogFilter): Query =
-    if (filter.mediaTypes.isEmpty()) this else bindList("mediaTypes", filter.mediaTypes.sorted())
+private const val ANY_GALLERY_MEMBERSHIP_CLAUSE_BODY =
+    " EXISTS (SELECT 1 FROM gallery_items gi" +
+        " WHERE gi.instagram_media_id = instagram_media_catalog.instagram_media_id)"
+
+private const val ANY_GALLERY_MEMBERSHIP_CLAUSE = " AND$ANY_GALLERY_MEMBERSHIP_CLAUSE_BODY"
+
+/** Binds the parameters referenced by [catalogFilterClause]; both clauses are optional, so both binds are conditional. */
+private fun Query.bindCatalogFilter(filter: CatalogFilter): Query {
+    val withGallery = if (filter.galleryId == null) this else bind("galleryId", filter.galleryId)
+    return if (filter.mediaTypes.isEmpty()) withGallery else withGallery.bindList("mediaTypes", filter.mediaTypes.sorted())
+}
+
+/**
+ * One `(media, gallery)` membership pair. A wrapper row rather than a bare `mapTo<Uuid>()` for the
+ * same reason [UuidRow] exists - JDBI resolves the Kotlin `Uuid` column mapper only for a
+ * `Uuid`-typed field inside a composite row.
+ */
+private data class MembershipRow(
+    val instagramMediaId: String,
+    val galleryId: Uuid,
+)
 
 /** One `RETURNING` row from [CatalogRepository.requestPurge] - the shortcode plus whether it had anything downloaded. */
 private data class PurgeRow(
+    val instagramMediaId: String,
     val shortcode: String,
     val hadPost: Boolean,
 )
@@ -737,18 +639,31 @@ class CatalogRepository(
                 .toSet()
         }
 
-    /** Used by the ingestion pipeline to decide which catalog items to download/store as posts. */
-    fun selectedMediaIds(accountId: String): Set<String> =
+    /**
+     * Used by the ingestion pipeline to decide which catalog items to download/store as posts: an
+     * item is worth downloading exactly when at least one of the account's galleries holds it.
+     *
+     * Scoped through `galleries`, deliberately, rather than through the catalog row's own
+     * `instagram_account_id`. Those two agree only because every write path enforces it; going via
+     * the gallery means a membership row that somehow crossed accounts feeds the *owning* account's
+     * download gate rather than silently widening someone else's.
+     */
+    fun mediaIdsInAnyGallery(accountId: String): Set<String> =
         jdbi.withHandle<Set<String>, Exception> { handle ->
             handle
                 .createQuery(
-                    "SELECT instagram_media_id FROM instagram_media_catalog WHERE instagram_account_id = :accountId AND selected = TRUE",
+                    """
+                    SELECT DISTINCT gi.instagram_media_id
+                    FROM gallery_items gi
+                    JOIN galleries g ON g.id = gi.gallery_id
+                    WHERE g.instagram_account_id = :accountId
+                    """.trimIndent(),
                 ).bind("accountId", accountId)
                 .mapTo<String>()
                 .toSet()
         }
 
-    /** Used by the ingestion pipeline to decide which catalog items still need a thumbnail fetched, independent of [selectedMediaIds]. */
+    /** Used by the ingestion pipeline to decide which catalog items still need a thumbnail fetched, independent of [mediaIdsInAnyGallery]. */
     fun mediaIdsNeedingThumbnail(accountId: String): Set<String> =
         jdbi.withHandle<Set<String>, Exception> { handle ->
             handle
@@ -784,12 +699,14 @@ class CatalogRepository(
      * The WHERE clause is assembled by [catalogFilterClause] and bound by [bindCatalogFilter],
      * which the `COUNT(*)` and the row query both go through - so the total can never describe a
      * different set of rows than the page it accompanies. Neither helper interpolates client input:
-     * the `selected`/`not_digestible_reason` clauses are fixed literals chosen by a type-safe
-     * `when` (same pattern as [InstagramPostRepository.findPage]'s `orderByClause`) and media types
-     * go through JDBI's `bindList`, i.e. real bind parameters.
+     * the membership and `not_digestible_reason` clauses are fixed literals chosen by a type-safe
+     * `when`, and the gallery id and media types go through real bind parameters.
      *
      * `ORDER BY` carries `instagram_media_id` (the primary key) as a tiebreaker because `timestamp`
-     * alone is not unique and offset paging needs a total order - see [InstagramPostRepository.findPage].
+     * alone is not unique and offset paging needs a total order.
+     *
+     * Each entry's gallery memberships are gathered in one batched follow-up query rather than
+     * per row, the same shape [GalleryRepository.findContentPage] uses for media items.
      */
     fun findPage(
         accountId: String,
@@ -813,139 +730,119 @@ class CatalogRepository(
                     .one()
 
             Page.of(totalRecords, pageSize, page) { offset ->
-                handle
-                    .createQuery(
-                        """
-                        SELECT * FROM instagram_media_catalog
-                        WHERE instagram_account_id = :accountId $filterClause
-                        ORDER BY timestamp DESC, instagram_media_id
-                        LIMIT :limit OFFSET :offset
-                        """.trimIndent(),
-                    ).bind("accountId", accountId)
-                    .bind("limit", pageSize)
-                    .bind("offset", offset)
-                    .bindCatalogFilter(filter)
-                    .mapTo<CatalogEntry>()
-                    .list()
+                val entries =
+                    handle
+                        .createQuery(
+                            """
+                            SELECT * FROM instagram_media_catalog
+                            WHERE instagram_account_id = :accountId $filterClause
+                            ORDER BY timestamp DESC, instagram_media_id
+                            LIMIT :limit OFFSET :offset
+                            """.trimIndent(),
+                        ).bind("accountId", accountId)
+                        .bind("limit", pageSize)
+                        .bind("offset", offset)
+                        .bindCatalogFilter(filter)
+                        .mapTo<CatalogEntry>()
+                        .list()
+
+                if (entries.isEmpty()) {
+                    emptyList()
+                } else {
+                    val galleriesByMedia =
+                        handle
+                            .createQuery(
+                                "SELECT instagram_media_id, gallery_id FROM gallery_items WHERE instagram_media_id IN (<ids>)",
+                            ).bindList("ids", entries.map { it.instagramMediaId })
+                            .mapTo<MembershipRow>()
+                            .list()
+                            .groupBy({ it.instagramMediaId }, { it.galleryId })
+
+                    entries.map { it.copy(galleryIds = galleriesByMedia[it.instagramMediaId].orEmpty()) }
+                }
             }
         }
     }
 
     /**
-     * Bulk select/deselect keyed by `shortcode` (the human-facing identifier admins work with),
-     * not `instagram_media_id`. Each requested set that's empty skips its round trip entirely.
-     * Scoped to `accountId` even though shortcodes are already globally unique, so a copy-paste
-     * mistake naming a shortcode from a *different* tracked account shows up as `notFound` rather
-     * than silently cross-selecting another account's content.
-     *
-     * Uses `UPDATE ... RETURNING shortcode` executed via `createQuery` (not `createUpdate`) since
-     * JDBI's `Query` delegates to `PreparedStatement.executeQuery()`, which pgjdbc supports for
-     * any statement carrying a `RETURNING` clause - the returned rows tell the caller exactly
-     * which of the requested shortcodes actually existed (for this account).
-     */
-    fun updateSelection(
-        accountId: String,
-        select: Set<String>,
-        deselect: Set<String>,
-    ): CatalogSelectionResult {
-        val selected = if (select.isEmpty()) emptySet() else applySelection(accountId, select, newValue = true)
-        val deselected = if (deselect.isEmpty()) emptySet() else applySelection(accountId, deselect, newValue = false)
-        return CatalogSelectionResult(selectedShortcodes = selected, deselectedShortcodes = deselected)
-    }
-
-    /**
-     * Also maintains the deletion clock, which is why this is one statement rather than a plain
-     * flag flip:
-     *
-     * - **Deselect** stamps `deselected_at`, starting the retention grace period. `COALESCE` keeps
-     *   any existing stamp, so deselecting an already-deselected item does not push its deletion
-     *   date out - an admin UI that submits its whole baseline on every save would otherwise keep
-     *   the item alive indefinitely.
-     * - **Reselect** clears both `deselected_at` and `purge_requested_at`, which is what makes a
-     *   reselected item ineligible for deletion. Clearing `deselected_at` is also why a *later*
-     *   deselection starts a fresh countdown instead of resuming the old one: the `COALESCE` above
-     *   then has nothing to coalesce onto.
-     * - `purge_requested_at` must be cleared on reselect too. Left armed, it would make the next
-     *   ordinary deselection delete the item instantly with no grace period at all - a surprising
-     *   result to reach from two unrelated actions taken days apart.
-     */
-    private fun applySelection(
-        accountId: String,
-        shortcodes: Set<String>,
-        newValue: Boolean,
-    ): Set<String> =
-        jdbi.withHandle<Set<String>, Exception> { handle ->
-            handle
-                .createQuery(
-                    """
-                    UPDATE instagram_media_catalog
-                    SET selected = :newValue,
-                        deselected_at = CASE
-                            WHEN :newValue THEN NULL
-                            ELSE COALESCE(deselected_at, CURRENT_TIMESTAMP)
-                        END,
-                        purge_requested_at = CASE WHEN :newValue THEN NULL ELSE purge_requested_at END
-                    WHERE instagram_account_id = :accountId AND shortcode = ANY(:shortcodes)
-                    RETURNING shortcode
-                    """.trimIndent(),
-                ).bind("newValue", newValue)
-                .bind("accountId", accountId)
-                .bindArray("shortcodes", String::class.java, shortcodes)
-                .mapTo<String>()
-                .toSet()
-        }
-
-    /**
-     * Arms an immediate purge of the given items' downloaded media: deselects them (so they leave
-     * the gallery at once and cannot be re-downloaded next cycle) and stamps `purge_requested_at`,
-     * which makes the next ingestion cycle's retention sweep delete their `instagram_posts` rows and
-     * S3 objects without waiting out the grace period.
+     * Arms an immediate purge of the given items' downloaded media: removes them from every gallery
+     * holding them (so they leave those galleries at once and cannot be re-downloaded next cycle)
+     * and stamps `purge_requested_at`, which makes the next ingestion cycle's retention sweep delete
+     * their `instagram_posts` rows and S3 objects without waiting out the grace period.
      *
      * The catalog row itself deliberately survives, along with its browse thumbnail - so the item
-     * stays visible in the admin catalog and can be selected again later, re-downloading fresh.
-     * Deleting the catalog row would be futile anyway: it is an unconditional mirror of the
-     * Instagram feed, so the next sync would simply re-insert it.
+     * stays visible in the admin catalog and can be added to a gallery again later, re-downloading
+     * fresh. Deleting the catalog row would be futile anyway: it is an unconditional mirror of the
+     * Instagram feed, so the next sync would simply re-insert it. Note the flip side, since it is a
+     * real cost: a purge discards that item's view/click counters in *every* gallery at once.
      *
      * `deselected_at` is stamped alongside so the two lifecycle columns can never disagree about
      * whether the item is on a clock.
      *
-     * One round trip yields both outcomes: `RETURNING` names the rows that existed (the rest were
-     * not found for this account), and the `EXISTS` tells them apart into "media will be deleted"
-     * and "there was nothing downloaded to delete". Account-scoped for the same reason
-     * [applySelection] is - a shortcode belonging to a *different* tracked account must report as
-     * not found rather than silently purge across a tenant boundary.
+     * **Transactional, and in this order.** This is three statements now, not one: lock, stamp, then
+     * delete memberships. The lock is what stops a concurrent membership change from interleaving
+     * (see [GalleryRepository.updateItems] for why that matters), and stamping before deleting means
+     * an interleaved add can never leave the item membership-free with no clock running.
+     *
+     * `RETURNING` names the rows that existed (the rest were not found for this account), and the
+     * `EXISTS` tells them apart into "media will be deleted" and "there was nothing downloaded to
+     * delete". Account-scoped so a shortcode belonging to a *different* tracked account reports as
+     * not found rather than silently purging across a tenant boundary.
      */
     fun requestPurge(
         accountId: String,
         shortcodes: Set<String>,
     ): PurgeRequestResult {
-        if (shortcodes.isEmpty()) return PurgeRequestResult(accepted = emptySet(), notInGallery = emptySet())
+        if (shortcodes.isEmpty()) return PurgeRequestResult(accepted = emptySet(), notDownloaded = emptySet())
 
         val rows =
-            jdbi.withHandle<List<PurgeRow>, Exception> { handle ->
+            jdbi.inTransaction<List<PurgeRow>, Exception> { handle ->
                 handle
                     .createQuery(
                         """
-                        UPDATE instagram_media_catalog c
-                        SET selected = FALSE,
-                            deselected_at = COALESCE(c.deselected_at, CURRENT_TIMESTAMP),
-                            purge_requested_at = COALESCE(c.purge_requested_at, CURRENT_TIMESTAMP)
-                        WHERE c.instagram_account_id = :accountId AND c.shortcode = ANY(:shortcodes)
-                        RETURNING c.shortcode,
-                                  EXISTS (
-                                      SELECT 1 FROM instagram_posts p
-                                      WHERE p.instagram_media_id = c.instagram_media_id
-                                  ) AS had_post
+                        SELECT 1 FROM instagram_media_catalog
+                        WHERE instagram_account_id = :accountId AND shortcode = ANY(:shortcodes)
+                        ORDER BY instagram_media_id
+                        FOR UPDATE
                         """.trimIndent(),
                     ).bind("accountId", accountId)
                     .bindArray("shortcodes", String::class.java, shortcodes)
-                    .mapTo<PurgeRow>()
+                    .mapTo<Int>()
                     .list()
+
+                val purged =
+                    handle
+                        .createQuery(
+                            """
+                            UPDATE instagram_media_catalog c
+                            SET deselected_at = COALESCE(c.deselected_at, CURRENT_TIMESTAMP),
+                                purge_requested_at = COALESCE(c.purge_requested_at, CURRENT_TIMESTAMP)
+                            WHERE c.instagram_account_id = :accountId AND c.shortcode = ANY(:shortcodes)
+                            RETURNING c.instagram_media_id,
+                                      c.shortcode,
+                                      EXISTS (
+                                          SELECT 1 FROM instagram_posts p
+                                          WHERE p.instagram_media_id = c.instagram_media_id
+                                      ) AS had_post
+                            """.trimIndent(),
+                        ).bind("accountId", accountId)
+                        .bindArray("shortcodes", String::class.java, shortcodes)
+                        .mapTo<PurgeRow>()
+                        .list()
+
+                if (purged.isNotEmpty()) {
+                    handle
+                        .createUpdate("DELETE FROM gallery_items WHERE instagram_media_id = ANY(:mediaIds)")
+                        .bindArray("mediaIds", String::class.java, purged.map { it.instagramMediaId })
+                        .execute()
+                }
+
+                purged
             }
 
         return PurgeRequestResult(
             accepted = rows.filter { it.hadPost }.map { it.shortcode }.toSet(),
-            notInGallery = rows.filterNot { it.hadPost }.map { it.shortcode }.toSet(),
+            notDownloaded = rows.filterNot { it.hadPost }.map { it.shortcode }.toSet(),
         )
     }
 }

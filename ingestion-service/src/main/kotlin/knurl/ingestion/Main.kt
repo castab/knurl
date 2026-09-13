@@ -7,6 +7,7 @@ import knurl.domain.config.S3Settings
 import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.AuthConfigRepository
 import knurl.domain.repositories.CatalogRepository
+import knurl.domain.repositories.GalleryRepository
 import knurl.domain.repositories.InstagramPostRepository
 import knurl.domain.repositories.ObjectKeyRepository
 import knurl.domain.repositories.SyncConfigurationRepository
@@ -68,6 +69,7 @@ fun main() =
         val authConfigRepository = AuthConfigRepository(jdbi)
         val postRepository = InstagramPostRepository(jdbi)
         val catalogRepository = CatalogRepository(jdbi)
+        val galleryRepository = GalleryRepository(jdbi)
         val syncConfigurationRepository = SyncConfigurationRepository(jdbi)
         val objectKeyRepository = ObjectKeyRepository(jdbi)
 
@@ -91,6 +93,7 @@ fun main() =
                 authConfigRepository = authConfigRepository,
                 postRepository = postRepository,
                 catalogRepository = catalogRepository,
+                galleryRepository = galleryRepository,
                 syncConfigurationRepository = syncConfigurationRepository,
                 metaGraphClient = metaGraphClient,
                 mediaProcessor = mediaProcessor,

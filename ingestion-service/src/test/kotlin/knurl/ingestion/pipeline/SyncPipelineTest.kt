@@ -247,16 +247,16 @@ class SyncPipelineTest :
         // The mechanism behind "reselecting inside the grace period costs no re-download": the post
         // row survives the whole window, so the item stays in existingIds and this gate stays shut.
         test("download gate: a reselected item that still has its media is not re-downloaded") {
-            shouldDownload("media-1", selectedIds = setOf("media-1"), existingIds = setOf("media-1")) shouldBe false
+            shouldDownload("media-1", galleryMemberIds = setOf("media-1"), existingIds = setOf("media-1")) shouldBe false
         }
 
         test("download gate: a selected item whose media was already deleted is downloaded again") {
-            shouldDownload("media-1", selectedIds = setOf("media-1"), existingIds = emptySet()) shouldBe true
+            shouldDownload("media-1", galleryMemberIds = setOf("media-1"), existingIds = emptySet()) shouldBe true
         }
 
         test("download gate: a deselected item is never downloaded, media present or not") {
-            shouldDownload("media-1", selectedIds = emptySet(), existingIds = emptySet()) shouldBe false
-            shouldDownload("media-1", selectedIds = emptySet(), existingIds = setOf("media-1")) shouldBe false
+            shouldDownload("media-1", galleryMemberIds = emptySet(), existingIds = emptySet()) shouldBe false
+            shouldDownload("media-1", galleryMemberIds = emptySet(), existingIds = setOf("media-1")) shouldBe false
         }
         test("vanished-media guard: at or below the floor, any fraction proceeds") {
             shouldSkipVanishedRemoval(vanishedCount = 5, existingCatalogCount = 5, maxPercent = 50) shouldBe false

@@ -10,6 +10,7 @@ import knurl.domain.models.CatalogEntry
 import knurl.presentation.s3.Presigner
 import java.time.Duration
 import java.time.Instant
+import kotlin.uuid.Uuid
 
 private fun testPresigner(ttl: Duration = Duration.ofHours(6)): Presigner =
     Presigner.create(
@@ -26,6 +27,7 @@ private fun testPresigner(ttl: Duration = Duration.ofHours(6)): Presigner =
 
 private fun testCatalogEntry(
     thumbnailPath: String?,
+    galleryIds: List<Uuid> = emptyList(),
     deselectedAt: Instant? = null,
     purgeRequestedAt: Instant? = null,
 ): CatalogEntry =
@@ -37,9 +39,9 @@ private fun testCatalogEntry(
         caption = "a caption",
         permalink = "https://www.instagram.com/p/Cabc123XYZ/",
         timestamp = Instant.parse("2024-01-01T00:00:00Z"),
-        selected = false,
         notDigestibleReason = null,
         thumbnailPath = thumbnailPath,
+        galleryIds = galleryIds,
         deselectedAt = deselectedAt,
         purgeRequestedAt = purgeRequestedAt,
         updatedAt = Instant.parse("2024-01-01T00:00:00Z"),

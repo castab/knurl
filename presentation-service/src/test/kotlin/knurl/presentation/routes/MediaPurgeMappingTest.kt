@@ -17,13 +17,13 @@ class MediaPurgeMappingTest :
             val results =
                 purgeResults(
                     requested = listOf("AAA", "BBB", "CCC"),
-                    result = PurgeRequestResult(accepted = setOf("AAA"), notInGallery = setOf("BBB")),
+                    result = PurgeRequestResult(accepted = setOf("AAA"), notDownloaded = setOf("BBB")),
                 )
 
             results shouldContainExactly
                 listOf(
                     MediaPurgeItemResult("AAA", "ACCEPTED"),
-                    MediaPurgeItemResult("BBB", "NOT_IN_GALLERY"),
+                    MediaPurgeItemResult("BBB", "NOT_DOWNLOADED"),
                     MediaPurgeItemResult("CCC", "NOT_FOUND"),
                 )
         }
@@ -32,7 +32,7 @@ class MediaPurgeMappingTest :
             val results =
                 purgeResults(
                     requested = listOf("CCC", "AAA", "BBB"),
-                    result = PurgeRequestResult(accepted = setOf("AAA", "BBB"), notInGallery = emptySet()),
+                    result = PurgeRequestResult(accepted = setOf("AAA", "BBB"), notDownloaded = emptySet()),
                 )
 
             results.map { it.shortcode } shouldContainExactly listOf("CCC", "AAA", "BBB")
@@ -44,7 +44,7 @@ class MediaPurgeMappingTest :
             val results =
                 purgeResults(
                     requested = listOf("AAA", "AAA", "BBB"),
-                    result = PurgeRequestResult(accepted = setOf("AAA", "BBB"), notInGallery = emptySet()),
+                    result = PurgeRequestResult(accepted = setOf("AAA", "BBB"), notDownloaded = emptySet()),
                 )
 
             results shouldContainExactly
@@ -58,7 +58,7 @@ class MediaPurgeMappingTest :
             val results =
                 purgeResults(
                     requested = listOf("AAA", "BBB"),
-                    result = PurgeRequestResult(accepted = emptySet(), notInGallery = emptySet()),
+                    result = PurgeRequestResult(accepted = emptySet(), notDownloaded = emptySet()),
                 )
 
             results.map { it.status } shouldContainExactly listOf("NOT_FOUND", "NOT_FOUND")

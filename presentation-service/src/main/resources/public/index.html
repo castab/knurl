@@ -35,6 +35,11 @@
     <section id="tab-gallery" class="tab-panel active">
       <div class="controls">
         <label>
+          Gallery
+          <select id="gallerySelect"></select>
+        </label>
+        <button type="button" id="galleryRefresh" class="secondary">Refresh list</button>
+        <label>
           Sort
           <select id="gallerySort">
             <option value="recent">Recent</option>
@@ -58,12 +63,24 @@
     </section>
 
     <section id="tab-admin" class="tab-panel">
+      <div class="controls gallery-manager">
+        <label>
+          Curating
+          <select id="adminGallerySelect"></select>
+        </label>
+        <input type="text" id="galleryNewName" placeholder="New gallery name" maxlength="100" />
+        <button type="button" id="galleryCreate">Create</button>
+        <button type="button" id="galleryRename" class="secondary" disabled>Rename</button>
+        <button type="button" id="galleryDelete" class="secondary" disabled>Delete</button>
+        <span id="galleryManagerStatus" class="status"></span>
+      </div>
+      <div id="galleryManagerError" class="error-banner hidden"></div>
       <div class="controls">
         <div class="filter-group">
           <span class="filter-group-label">Filters</span>
           <label class="checkbox-label">
-            <input type="checkbox" id="filterSelected" />
-            Selected
+            <input type="checkbox" id="filterInGallery" />
+            In this gallery
           </label>
           <label class="checkbox-label" title="Unsaved changes are browser-only, so this filters the current page rather than the whole catalog.">
             <input type="checkbox" id="filterPending" />
@@ -89,7 +106,7 @@
         <button type="button" id="catalogLoad">Load Catalog</button>
         <span id="pendingSummary" class="pending-count"></span>
         <button type="button" id="catalogReset" disabled>Reset</button>
-        <button type="button" id="catalogCommit" disabled>Commit Selection</button>
+        <button type="button" id="catalogCommit" disabled>Commit Membership</button>
       </div>
       <div id="catalogError" class="error-banner hidden"></div>
       <div id="catalogStatus" class="status"></div>

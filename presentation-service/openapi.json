@@ -12,9 +12,81 @@
     "description" : null
   } ],
   "paths" : {
-    "/api/v1/accounts/{accountId}/gallery" : {
+    "/api/v1/accounts/{accountId}/galleries" : {
       "get" : {
-        "summary" : "List a page of gallery posts for an account, sorted by recency or view count",
+        "summary" : "List an account's galleries",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "page",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "data" : [ {
+                    "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+                    "name" : "Travel",
+                    "itemCount" : 24,
+                    "publishedCount" : 22,
+                    "createdAt" : "2024-01-01T00:00:00Z",
+                    "updatedAt" : "2024-01-02T00:00:00Z"
+                  } ],
+                  "pagination" : {
+                    "totalRecords" : 100,
+                    "currentPage" : 2,
+                    "totalPages" : 10,
+                    "links" : {
+                      "first" : "/api/v1/accounts/{accountId}/galleries?page=1",
+                      "prev" : "/api/v1/accounts/{accountId}/galleries?page=1",
+                      "self" : "/api/v1/accounts/{accountId}/galleries?page=2",
+                      "next" : "/api/v1/accounts/{accountId}/galleries?page=3",
+                      "last" : "/api/v1/accounts/{accountId}/galleries?page=10"
+                    }
+                  }
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/GalleryListResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ ],
+        "operationId" : "getApiV1Accounts_accountId_Galleries",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/accounts/{accountId}/galleries/{galleryId}" : {
+      "get" : {
+        "summary" : "List a page of one gallery's posts, sorted by recency or view count",
         "description" : null,
         "tags" : [ "" ],
         "parameters" : [ {
@@ -49,6 +121,14 @@
           "name" : "accountId",
           "required" : true,
           "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "galleryId",
+          "required" : true,
+          "description" : null
         } ],
         "responses" : {
           "200" : {
@@ -56,6 +136,14 @@
             "content" : {
               "application/json" : {
                 "example" : {
+                  "gallery" : {
+                    "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+                    "name" : "Travel",
+                    "itemCount" : 24,
+                    "publishedCount" : 22,
+                    "createdAt" : "2024-01-01T00:00:00Z",
+                    "updatedAt" : "2024-01-02T00:00:00Z"
+                  },
                   "data" : [ {
                     "id" : "01234567-89ab-cdef-0123-456789abcdef",
                     "mediaType" : "IMAGE",
@@ -86,11 +174,11 @@
                     "currentPage" : 2,
                     "totalPages" : 10,
                     "links" : {
-                      "first" : "/api/v1/accounts/{accountId}/gallery?page=1",
-                      "prev" : "/api/v1/accounts/{accountId}/gallery?page=1",
-                      "self" : "/api/v1/accounts/{accountId}/gallery?page=2",
-                      "next" : "/api/v1/accounts/{accountId}/gallery?page=3",
-                      "last" : "/api/v1/accounts/{accountId}/gallery?page=10"
+                      "first" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=1",
+                      "prev" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=1",
+                      "self" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=2",
+                      "next" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=3",
+                      "last" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=10"
                     }
                   }
                 },
@@ -104,14 +192,14 @@
           }
         },
         "security" : [ ],
-        "operationId" : "getApiV1Accounts_accountId_Gallery",
+        "operationId" : "getApiV1Accounts_accountId_Galleries_galleryId",
         "deprecated" : false,
         "callbacks" : null
       }
     },
-    "/api/v1/accounts/{accountId}/gallery/track" : {
+    "/api/v1/accounts/{accountId}/galleries/{galleryId}/track" : {
       "post" : {
-        "summary" : "Record a view or click analytics event for a post",
+        "summary" : "Record a view or click analytics event for a post within a gallery",
         "description" : null,
         "tags" : [ "" ],
         "parameters" : [ {
@@ -122,12 +210,20 @@
           "name" : "accountId",
           "required" : true,
           "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "galleryId",
+          "required" : true,
+          "description" : null
         } ],
         "requestBody" : {
           "content" : {
             "application/json" : {
               "example" : {
-                "id" : "id",
+                "id" : "01234567-89ab-cdef-0123-456789abcdef",
                 "event" : "view"
               },
               "schema" : {
@@ -159,7 +255,7 @@
         "security" : [ {
           "galleryTrackingBearer" : [ ]
         } ],
-        "operationId" : "postApiV1Accounts_accountId_GalleryTrack",
+        "operationId" : "postApiV1Accounts_accountId_Galleries_galleryId_Track",
         "deprecated" : false,
         "callbacks" : null
       }
@@ -174,7 +270,15 @@
             "type" : "string"
           },
           "in" : "query",
-          "name" : "selected",
+          "name" : "galleryId",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "query",
+          "name" : "inAnyGallery",
           "required" : false,
           "description" : null
         }, {
@@ -233,7 +337,7 @@
                     "caption" : "An example caption",
                     "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
                     "timestamp" : "2024-01-01T00:00:00Z",
-                    "selected" : false,
+                    "galleryIds" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
                     "notDigestibleReason" : "copyright",
                     "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
                     "deselectedAt" : "2024-01-02T00:00:00Z",
@@ -311,7 +415,7 @@
                     "status" : "ACCEPTED"
                   }, {
                     "shortcode" : "Cdef456UVW",
-                    "status" : "NOT_IN_GALLERY"
+                    "status" : "NOT_DOWNLOADED"
                   } ]
                 },
                 "schema" : {
@@ -331,9 +435,9 @@
         "callbacks" : null
       }
     },
-    "/api/v1/admin/accounts/{accountId}/catalog/selections" : {
-      "patch" : {
-        "summary" : "Bulk-select or deselect catalog entries by shortcode",
+    "/api/v1/admin/accounts/{accountId}/galleries" : {
+      "post" : {
+        "summary" : "Create a named gallery",
         "description" : null,
         "tags" : [ "" ],
         "parameters" : [ {
@@ -349,11 +453,132 @@
           "content" : {
             "application/json" : {
               "example" : {
-                "select" : [ "Cabc123XYZ" ],
-                "deselect" : [ "Cdef456UVW" ]
+                "name" : "Travel"
               },
               "schema" : {
-                "$ref" : "#/components/schemas/SelectionUpdateRequest",
+                "$ref" : "#/components/schemas/GalleryWriteRequest",
+                "example" : null,
+                "format" : null
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "201" : {
+            "description" : "Created",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+                  "name" : "Travel",
+                  "itemCount" : 24,
+                  "publishedCount" : 22,
+                  "createdAt" : "2024-01-01T00:00:00Z",
+                  "updatedAt" : "2024-01-02T00:00:00Z"
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/GallerySummaryResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "postApiV1AdminAccounts_accountId_Galleries",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/galleries/{galleryId}" : {
+      "delete" : {
+        "summary" : "Delete a gallery; a non-empty one requires force=true",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "query",
+          "name" : "force",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "galleryId",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "name" : "Travel",
+                  "itemsRemoved" : 24,
+                  "itemsReleased" : 7
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/GalleryDeleteResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "deleteApiV1AdminAccounts_accountId_Galleries_galleryId",
+        "deprecated" : false,
+        "callbacks" : null
+      },
+      "patch" : {
+        "summary" : "Rename a gallery, keeping its id and content",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "galleryId",
+          "required" : true,
+          "description" : null
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "example" : {
+                "name" : "Travel 2024"
+              },
+              "schema" : {
+                "$ref" : "#/components/schemas/GalleryWriteRequest",
                 "example" : null,
                 "format" : null
               }
@@ -367,12 +592,15 @@
             "content" : {
               "application/json" : {
                 "example" : {
-                  "selected" : [ "Cabc123XYZ" ],
-                  "deselected" : [ "Cdef456UVW" ],
-                  "notFound" : [ "Cghi789RST" ]
+                  "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+                  "name" : "Travel",
+                  "itemCount" : 24,
+                  "publishedCount" : 22,
+                  "createdAt" : "2024-01-01T00:00:00Z",
+                  "updatedAt" : "2024-01-02T00:00:00Z"
                 },
                 "schema" : {
-                  "$ref" : "#/components/schemas/SelectionUpdateResponse",
+                  "$ref" : "#/components/schemas/GallerySummaryResponse",
                   "example" : null,
                   "format" : null
                 }
@@ -383,7 +611,73 @@
         "security" : [ {
           "accountAdminBearer" : [ ]
         } ],
-        "operationId" : "patchApiV1AdminAccounts_accountId_CatalogSelections",
+        "operationId" : "patchApiV1AdminAccounts_accountId_Galleries_galleryId",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/galleries/{galleryId}/items" : {
+      "patch" : {
+        "summary" : "Add or remove a gallery's items by shortcode",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "galleryId",
+          "required" : true,
+          "description" : null
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "example" : {
+                "add" : [ "Cabc123XYZ" ],
+                "remove" : [ "Cdef456UVW" ]
+              },
+              "schema" : {
+                "$ref" : "#/components/schemas/GalleryItemsRequest",
+                "example" : null,
+                "format" : null
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "added" : [ "Cabc123XYZ" ],
+                  "alreadyPresent" : [ "Cghi789RST" ],
+                  "removed" : [ "Cdef456UVW" ],
+                  "notFound" : [ "Cjkl012MNO" ]
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/GalleryItemsResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "patchApiV1AdminAccounts_accountId_Galleries_galleryId_Items",
         "deprecated" : false,
         "callbacks" : null
       }
@@ -392,8 +686,185 @@
   "webhooks" : null,
   "components" : {
     "schemas" : {
+      "GalleryListResponse" : {
+        "properties" : {
+          "data" : {
+            "items" : {
+              "$ref" : "#/components/schemas/GallerySummaryResponse"
+            },
+            "example" : [ {
+              "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+              "name" : "Travel",
+              "itemCount" : 24,
+              "publishedCount" : 22,
+              "createdAt" : "2024-01-01T00:00:00Z",
+              "updatedAt" : "2024-01-02T00:00:00Z"
+            } ],
+            "format" : null,
+            "type" : "array"
+          },
+          "pagination" : {
+            "$ref" : "#/components/schemas/PaginationMeta",
+            "example" : null,
+            "format" : null
+          }
+        },
+        "example" : {
+          "data" : [ {
+            "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+            "name" : "Travel",
+            "itemCount" : 24,
+            "publishedCount" : 22,
+            "createdAt" : "2024-01-01T00:00:00Z",
+            "updatedAt" : "2024-01-02T00:00:00Z"
+          } ],
+          "pagination" : {
+            "totalRecords" : 100,
+            "currentPage" : 2,
+            "totalPages" : 10,
+            "links" : {
+              "first" : "/api/v1/accounts/{accountId}/galleries?page=1",
+              "prev" : "/api/v1/accounts/{accountId}/galleries?page=1",
+              "self" : "/api/v1/accounts/{accountId}/galleries?page=2",
+              "next" : "/api/v1/accounts/{accountId}/galleries?page=3",
+              "last" : "/api/v1/accounts/{accountId}/galleries?page=10"
+            }
+          }
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "data", "pagination" ]
+      },
+      "GallerySummaryResponse" : {
+        "properties" : {
+          "id" : {
+            "example" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+            "format" : null,
+            "type" : "string"
+          },
+          "name" : {
+            "example" : "Travel",
+            "format" : null,
+            "type" : "string"
+          },
+          "itemCount" : {
+            "example" : 24,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "publishedCount" : {
+            "example" : 22,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "createdAt" : {
+            "example" : "2024-01-01T00:00:00Z",
+            "format" : null,
+            "type" : "string"
+          },
+          "updatedAt" : {
+            "example" : "2024-01-02T00:00:00Z",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+          "name" : "Travel",
+          "itemCount" : 24,
+          "publishedCount" : 22,
+          "createdAt" : "2024-01-01T00:00:00Z",
+          "updatedAt" : "2024-01-02T00:00:00Z"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "createdAt", "id", "itemCount", "name", "publishedCount", "updatedAt" ]
+      },
+      "PaginationMeta" : {
+        "properties" : {
+          "totalRecords" : {
+            "example" : 100,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "currentPage" : {
+            "example" : 2,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "totalPages" : {
+            "example" : 10,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "links" : {
+            "$ref" : "#/components/schemas/PaginationLinks",
+            "example" : null,
+            "format" : null
+          }
+        },
+        "example" : {
+          "totalRecords" : 100,
+          "currentPage" : 2,
+          "totalPages" : 10,
+          "links" : {
+            "first" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+            "prev" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+            "self" : "/api/v1/admin/accounts/{accountId}/catalog?page=2",
+            "next" : "/api/v1/admin/accounts/{accountId}/catalog?page=3",
+            "last" : "/api/v1/admin/accounts/{accountId}/catalog?page=10"
+          }
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "currentPage", "links", "totalPages", "totalRecords" ]
+      },
+      "PaginationLinks" : {
+        "properties" : {
+          "first" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+            "format" : null,
+            "type" : "string"
+          },
+          "prev" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "self" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=2",
+            "format" : null,
+            "type" : "string"
+          },
+          "next" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=3",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "last" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=10",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "first" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+          "prev" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+          "self" : "/api/v1/admin/accounts/{accountId}/catalog?page=2",
+          "next" : "/api/v1/admin/accounts/{accountId}/catalog?page=3",
+          "last" : "/api/v1/admin/accounts/{accountId}/catalog?page=10"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "first", "last", "self" ]
+      },
       "GalleryResponse" : {
         "properties" : {
+          "gallery" : {
+            "$ref" : "#/components/schemas/GallerySummaryResponse",
+            "example" : null,
+            "format" : null
+          },
           "data" : {
             "items" : {
               "$ref" : "#/components/schemas/GalleryItemResponse"
@@ -433,6 +904,14 @@
           }
         },
         "example" : {
+          "gallery" : {
+            "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+            "name" : "Travel",
+            "itemCount" : 24,
+            "publishedCount" : 22,
+            "createdAt" : "2024-01-01T00:00:00Z",
+            "updatedAt" : "2024-01-02T00:00:00Z"
+          },
           "data" : [ {
             "id" : "01234567-89ab-cdef-0123-456789abcdef",
             "mediaType" : "IMAGE",
@@ -463,17 +942,17 @@
             "currentPage" : 2,
             "totalPages" : 10,
             "links" : {
-              "first" : "/api/v1/accounts/{accountId}/gallery?page=1",
-              "prev" : "/api/v1/accounts/{accountId}/gallery?page=1",
-              "self" : "/api/v1/accounts/{accountId}/gallery?page=2",
-              "next" : "/api/v1/accounts/{accountId}/gallery?page=3",
-              "last" : "/api/v1/accounts/{accountId}/gallery?page=10"
+              "first" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=1",
+              "prev" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=1",
+              "self" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=2",
+              "next" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=3",
+              "last" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=10"
             }
           }
         },
         "format" : null,
         "type" : "object",
-        "required" : [ "data", "pagination" ]
+        "required" : [ "data", "gallery", "pagination" ]
       },
       "GalleryItemResponse" : {
         "properties" : {
@@ -658,84 +1137,6 @@
         "type" : "object",
         "required" : [ "largeFileSizeBytes", "largeHeight", "largeUrl", "largeWidth", "mediaType", "mediaUrlExpiresAt", "smallFileSizeBytes", "smallHeight", "smallUrl", "smallWidth" ]
       },
-      "PaginationMeta" : {
-        "properties" : {
-          "totalRecords" : {
-            "example" : 100,
-            "format" : "int32",
-            "type" : "integer"
-          },
-          "currentPage" : {
-            "example" : 2,
-            "format" : "int32",
-            "type" : "integer"
-          },
-          "totalPages" : {
-            "example" : 10,
-            "format" : "int32",
-            "type" : "integer"
-          },
-          "links" : {
-            "$ref" : "#/components/schemas/PaginationLinks",
-            "example" : null,
-            "format" : null
-          }
-        },
-        "example" : {
-          "totalRecords" : 100,
-          "currentPage" : 2,
-          "totalPages" : 10,
-          "links" : {
-            "first" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
-            "prev" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
-            "self" : "/api/v1/admin/accounts/{accountId}/catalog?page=2",
-            "next" : "/api/v1/admin/accounts/{accountId}/catalog?page=3",
-            "last" : "/api/v1/admin/accounts/{accountId}/catalog?page=10"
-          }
-        },
-        "format" : null,
-        "type" : "object",
-        "required" : [ "currentPage", "links", "totalPages", "totalRecords" ]
-      },
-      "PaginationLinks" : {
-        "properties" : {
-          "first" : {
-            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
-            "format" : null,
-            "type" : "string"
-          },
-          "prev" : {
-            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
-            "format" : null,
-            "type" : [ "string", "null" ]
-          },
-          "self" : {
-            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=2",
-            "format" : null,
-            "type" : "string"
-          },
-          "next" : {
-            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=3",
-            "format" : null,
-            "type" : [ "string", "null" ]
-          },
-          "last" : {
-            "example" : "/api/v1/admin/accounts/{accountId}/catalog?page=10",
-            "format" : null,
-            "type" : "string"
-          }
-        },
-        "example" : {
-          "first" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
-          "prev" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
-          "self" : "/api/v1/admin/accounts/{accountId}/catalog?page=2",
-          "next" : "/api/v1/admin/accounts/{accountId}/catalog?page=3",
-          "last" : "/api/v1/admin/accounts/{accountId}/catalog?page=10"
-        },
-        "format" : null,
-        "type" : "object",
-        "required" : [ "first", "last", "self" ]
-      },
       "TrackResponse" : {
         "properties" : {
           "status" : {
@@ -754,7 +1155,7 @@
       "TrackRequest" : {
         "properties" : {
           "id" : {
-            "example" : "id",
+            "example" : "01234567-89ab-cdef-0123-456789abcdef",
             "format" : null,
             "type" : "string"
           },
@@ -765,7 +1166,7 @@
           }
         },
         "example" : {
-          "id" : "id",
+          "id" : "01234567-89ab-cdef-0123-456789abcdef",
           "event" : "view"
         },
         "format" : null,
@@ -784,7 +1185,7 @@
               "caption" : "An example caption",
               "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
               "timestamp" : "2024-01-01T00:00:00Z",
-              "selected" : false,
+              "galleryIds" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
               "notDigestibleReason" : "copyright",
               "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
               "deselectedAt" : "2024-01-02T00:00:00Z",
@@ -806,7 +1207,7 @@
             "caption" : "An example caption",
             "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
             "timestamp" : "2024-01-01T00:00:00Z",
-            "selected" : false,
+            "galleryIds" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
             "notDigestibleReason" : "copyright",
             "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
             "deselectedAt" : "2024-01-02T00:00:00Z",
@@ -856,10 +1257,14 @@
             "format" : null,
             "type" : "string"
           },
-          "selected" : {
-            "example" : false,
+          "galleryIds" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
             "format" : null,
-            "type" : "boolean"
+            "type" : "array"
           },
           "notDigestibleReason" : {
             "example" : "copyright",
@@ -888,7 +1293,7 @@
           "caption" : "An example caption",
           "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
           "timestamp" : "2024-01-01T00:00:00Z",
-          "selected" : false,
+          "galleryIds" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
           "notDigestibleReason" : "copyright",
           "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
           "deselectedAt" : "2024-01-02T00:00:00Z",
@@ -896,75 +1301,7 @@
         },
         "format" : null,
         "type" : "object",
-        "required" : [ "mediaType", "permalink", "selected", "shortcode", "timestamp" ]
-      },
-      "SelectionUpdateResponse" : {
-        "properties" : {
-          "selected" : {
-            "items" : {
-              "format" : null,
-              "type" : "string"
-            },
-            "example" : [ "Cabc123XYZ" ],
-            "format" : null,
-            "type" : "array"
-          },
-          "deselected" : {
-            "items" : {
-              "format" : null,
-              "type" : "string"
-            },
-            "example" : [ "Cdef456UVW" ],
-            "format" : null,
-            "type" : "array"
-          },
-          "notFound" : {
-            "items" : {
-              "format" : null,
-              "type" : "string"
-            },
-            "example" : [ "Cghi789RST" ],
-            "format" : null,
-            "type" : "array"
-          }
-        },
-        "example" : {
-          "selected" : [ "Cabc123XYZ" ],
-          "deselected" : [ "Cdef456UVW" ],
-          "notFound" : [ "Cghi789RST" ]
-        },
-        "format" : null,
-        "type" : "object",
-        "required" : [ "deselected", "notFound", "selected" ]
-      },
-      "SelectionUpdateRequest" : {
-        "properties" : {
-          "select" : {
-            "items" : {
-              "format" : null,
-              "type" : "string"
-            },
-            "example" : [ "Cabc123XYZ" ],
-            "format" : null,
-            "type" : "array"
-          },
-          "deselect" : {
-            "items" : {
-              "format" : null,
-              "type" : "string"
-            },
-            "example" : [ "Cdef456UVW" ],
-            "format" : null,
-            "type" : "array"
-          }
-        },
-        "example" : {
-          "select" : [ "Cabc123XYZ" ],
-          "deselect" : [ "Cdef456UVW" ]
-        },
-        "format" : null,
-        "type" : "object",
-        "required" : [ "deselect", "select" ]
+        "required" : [ "galleryIds", "mediaType", "permalink", "shortcode", "timestamp" ]
       },
       "MediaPurgeResponse" : {
         "properties" : {
@@ -987,7 +1324,7 @@
               "status" : "ACCEPTED"
             }, {
               "shortcode" : "Cdef456UVW",
-              "status" : "NOT_IN_GALLERY"
+              "status" : "NOT_DOWNLOADED"
             } ],
             "format" : null,
             "type" : "array"
@@ -1001,7 +1338,7 @@
             "status" : "ACCEPTED"
           }, {
             "shortcode" : "Cdef456UVW",
-            "status" : "NOT_IN_GALLERY"
+            "status" : "NOT_DOWNLOADED"
           } ]
         },
         "format" : null,
@@ -1047,6 +1384,126 @@
         "format" : null,
         "type" : "object",
         "required" : [ "shortcodes" ]
+      },
+      "GalleryWriteRequest" : {
+        "properties" : {
+          "name" : {
+            "example" : "Travel 2024",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "name" : "Travel 2024"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "name" ]
+      },
+      "GalleryDeleteResponse" : {
+        "properties" : {
+          "name" : {
+            "example" : "Travel",
+            "format" : null,
+            "type" : "string"
+          },
+          "itemsRemoved" : {
+            "example" : 24,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "itemsReleased" : {
+            "example" : 7,
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "example" : {
+          "name" : "Travel",
+          "itemsRemoved" : 24,
+          "itemsReleased" : 7
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "itemsReleased", "itemsRemoved", "name" ]
+      },
+      "GalleryItemsResponse" : {
+        "properties" : {
+          "added" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cabc123XYZ" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "alreadyPresent" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cghi789RST" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "removed" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cdef456UVW" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "notFound" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cjkl012MNO" ],
+            "format" : null,
+            "type" : "array"
+          }
+        },
+        "example" : {
+          "added" : [ "Cabc123XYZ" ],
+          "alreadyPresent" : [ "Cghi789RST" ],
+          "removed" : [ "Cdef456UVW" ],
+          "notFound" : [ "Cjkl012MNO" ]
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "added", "alreadyPresent", "notFound", "removed" ]
+      },
+      "GalleryItemsRequest" : {
+        "properties" : {
+          "add" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cabc123XYZ" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "remove" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cdef456UVW" ],
+            "format" : null,
+            "type" : "array"
+          }
+        },
+        "example" : {
+          "add" : [ "Cabc123XYZ" ],
+          "remove" : [ "Cdef456UVW" ]
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "add", "remove" ]
       }
     },
     "securitySchemes" : {

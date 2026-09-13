@@ -5,14 +5,12 @@ import knurl.domain.models.CatalogFilter
 import knurl.domain.models.PurgeRequestResult
 import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.CatalogRepository
-import knurl.presentation.auth.BearerToken
 import knurl.presentation.s3.Presigner
 import kotlinx.serialization.Serializable
 import org.http4k.contract.ContractRoute
 import org.http4k.contract.bindContract
 import org.http4k.contract.div
 import org.http4k.contract.meta
-import org.http4k.core.Filter
 import org.http4k.core.Method
 import org.http4k.core.Request
 import org.http4k.core.Response
@@ -23,7 +21,7 @@ import org.http4k.lens.Path
 import org.http4k.lens.Query
 import org.http4k.lens.int
 import org.http4k.lens.string
-import org.http4k.security.BearerAuthSecurity
+import kotlin.uuid.Uuid
 
 @Serializable
 data class AdminCatalogItemResponse(
@@ -32,28 +30,29 @@ data class AdminCatalogItemResponse(
     val caption: String?,
     val permalink: String,
     val timestamp: String,
-    val selected: Boolean,
+    /** Every gallery this item currently belongs to, by id. Empty means it is in none. */
+    val galleryIds: List<String>,
     /**
      * Null for a normal, downloadable item. Non-null (currently only `"copyright"`) means
      * ingestion-service determined the underlying media can never be fetched via the Graph API -
      * e.g. Instagram permanently omits `media_url` for video/Reels content flagged with
-     * copyrighted audio - so selecting this item would never actually produce a gallery post.
+     * copyrighted audio - so adding this item to a gallery would never actually produce a post.
      */
     val notDigestibleReason: String? = null,
     /** Presigned GET URL for the cheap catalog-browse thumbnail, or null if none has been fetched yet. */
     val thumbnailUrl: String? = null,
     /**
-     * When this item was deselected, or null if it is selected (or never was). Non-null means its
-     * downloaded media is on a deletion clock and will be removed once the configured retention
-     * period has elapsed - until then the decision is still free to reverse, because reselecting
-     * clears this and costs no re-download.
+     * When this item left its last gallery, or null if it is still in one (or never was in any).
+     * Non-null means its downloaded media is on a deletion clock and will be removed once the
+     * configured retention period has elapsed - until then the decision is still free to reverse,
+     * because adding it back to any gallery clears this and costs no re-download.
      */
     val deselectedAt: String? = null,
     /**
      * When an admin requested an outright purge, or null if none is pending. Non-null means the
      * grace period above is being skipped and the media goes on the next ingestion cycle. The
      * catalog entry itself always survives either way, so the item stays listed here and can be
-     * selected again (which re-downloads it fresh).
+     * added to a gallery again (which re-downloads it fresh).
      */
     val purgeRequestedAt: String? = null,
 )
@@ -65,19 +64,6 @@ data class AdminCatalogResponse(
 )
 
 @Serializable
-data class SelectionUpdateRequest(
-    val select: List<String> = emptyList(),
-    val deselect: List<String> = emptyList(),
-)
-
-@Serializable
-data class SelectionUpdateResponse(
-    val selected: List<String>,
-    val deselected: List<String>,
-    val notFound: List<String>,
-)
-
-@Serializable
 data class MediaPurgeRequest(
     val shortcodes: List<String> = emptyList(),
 )
@@ -85,11 +71,11 @@ data class MediaPurgeRequest(
 /**
  * Outcome for one requested shortcode.
  *
- * - `ACCEPTED` - the item had downloaded media; it has left the gallery already and its S3 objects
- *   are deleted by the next ingestion cycle.
- * - `NOT_IN_GALLERY` - the item exists in the catalog but nothing was ever downloaded for it (or it
- *   was purged previously), so there is nothing to delete. It is deselected anyway, defensively, so
- *   a stale selection cannot cause a download next cycle.
+ * - `ACCEPTED` - the item had downloaded media; it has already left every gallery holding it and
+ *   its S3 objects are deleted by the next ingestion cycle.
+ * - `NOT_DOWNLOADED` - the item exists in the catalog but nothing was ever downloaded for it (or it
+ *   was purged previously), so there is nothing to delete. It is removed from every gallery anyway,
+ *   defensively, so a stale membership cannot cause a download next cycle.
  * - `NOT_FOUND` - no catalog entry with that shortcode for this account.
  */
 @Serializable
@@ -103,7 +89,7 @@ data class MediaPurgeItemResult(
  * the bytes are still there when this response is written - ingestion deletes them on its next
  * cycle. Naming the field for a deletion that has not happened yet would be a false claim, which is
  * also why the endpoint answers `202 Accepted` rather than `200 OK`. What *is* immediate is the
- * item leaving the gallery, since gallery visibility is derived from `selected`.
+ * item leaving every gallery that held it, since a gallery shows exactly its members.
  */
 @Serializable
 data class MediaPurgeResponse(
@@ -139,7 +125,7 @@ internal fun purgeResults(
         val status =
             when (shortcode) {
                 in result.accepted -> "ACCEPTED"
-                in result.notInGallery -> "NOT_IN_GALLERY"
+                in result.notDownloaded -> "NOT_DOWNLOADED"
                 else -> "NOT_FOUND"
             }
         MediaPurgeItemResult(shortcode = shortcode, status = status)
@@ -161,7 +147,7 @@ private val EXAMPLE_CATALOG_ITEM =
         caption = "An example caption",
         permalink = "https://www.instagram.com/p/Cabc123XYZ/",
         timestamp = "2024-01-01T00:00:00Z",
-        selected = false,
+        galleryIds = listOf("01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f"),
         notDigestibleReason = "copyright",
         thumbnailUrl = "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
         deselectedAt = "2024-01-02T00:00:00Z",
@@ -175,7 +161,7 @@ internal fun CatalogEntry.toResponse(presigner: Presigner): AdminCatalogItemResp
         caption = caption,
         permalink = permalink,
         timestamp = timestamp.toString(),
-        selected = selected,
+        galleryIds = galleryIds.map { it.toString() },
         notDigestibleReason = notDigestibleReason,
         thumbnailUrl = thumbnailPath?.let { presigner.presignGet(it).url },
         deselectedAt = deselectedAt?.toString(),
@@ -184,78 +170,59 @@ internal fun CatalogEntry.toResponse(presigner: Presigner): AdminCatalogItemResp
 
 /**
  * Admin-only surface for browsing one account's full Instagram media catalog and curating which
- * items get downloaded/stored as gallery posts. Unlike the rest of presentation-service, this is a
- * narrow, deliberate exception to "zero database writes": `PATCH .../selections` flips
- * `instagram_media_catalog.selected` and `DELETE .../catalog/media` arms an immediate purge on the
- * same table, both of which `ingestion-service` acts on during its next cycle.
+ * items exist to curate into galleries. Membership itself is managed per gallery by
+ * [AdminGalleryRoutes]; what lives here is the browse surface and the outright purge.
  *
- * Neither makes an S3 call. Deletion of media stays entirely `ingestion-service`'s job - these
- * routes only record intent in the database, which is what keeps the bucket credentials' destructive
- * surface out of the internet-facing service.
+ * Unlike the rest of presentation-service, this is a deliberate exception to "zero database
+ * writes": `DELETE .../catalog/media` arms an immediate purge, which `ingestion-service` acts on
+ * during its next cycle. It makes no S3 call - deletion of media stays entirely
+ * `ingestion-service`'s job, and these routes only record intent in the database, which is what
+ * keeps the bucket credentials' destructive surface out of the internet-facing service.
  *
- * Authorization here is per-account, not the single global [knurl.presentation.auth.BearerAuth]
- * used by gallery tracking - a single presentation-service deployment can serve many accounts, so
- * each account's own admin token (set/rotated by that account's `ingestion-service` instance,
- * looked up here via [accountRepository]) is required, never a shared secret across accounts.
+ * Authorization is per-account via [authorizeAccount], not the single global
+ * [knurl.presentation.auth.BearerAuth] used by gallery tracking - a single presentation-service
+ * deployment serves many accounts, so each account's own admin token is required and one account's
+ * token must never work against another's content.
  */
 class AdminCatalogRoutes(
     private val catalogRepository: CatalogRepository,
     private val accountRepository: AccountRepository,
     private val presigner: Presigner,
 ) {
-    // Authorization for this scheme remains dynamic inside [authorize], because each account has
-    // its own token. The no-op filter exists only to describe that bearer scheme to OpenAPI.
-    private val adminBearerSecurity = BearerAuthSecurity(Filter { next -> next }, "accountAdminBearer")
     private val accountIdPath = Path.of("accountId")
-    private val selectedQuery = Query.string().optional("selected")
+    private val galleryIdQuery = Query.string().optional("galleryId")
+    private val inAnyGalleryQuery = Query.string().optional("inAnyGallery")
     private val includeNotDigestibleQuery = Query.string().optional("includeNotDigestible")
     private val mediaTypeQuery = Query.string().multi.optional("mediaType")
     private val limitQuery = Query.int().defaulted("limit", MAX_PAGE_SIZE)
     private val pageQuery = Query.int().defaulted("page", 1)
     private val catalogResponseLens = autoBody<AdminCatalogResponse>().toLens()
     private val errorResponseLens = autoBody<ErrorResponse>().toLens()
-    private val selectionUpdateRequestLens = autoBody<SelectionUpdateRequest>().toLens()
-    private val selectionUpdateResponseLens = autoBody<SelectionUpdateResponse>().toLens()
     private val mediaPurgeRequestLens = autoBody<MediaPurgeRequest>().toLens()
     private val mediaPurgeResponseLens = autoBody<MediaPurgeResponse>().toLens()
-
-    /**
-     * `404` for an unknown account is safe to reveal (account ids are public, non-secret), and
-     * distinguishes "no such account" from "wrong token for a real account" (`401`).
-     */
-    private fun authorize(
-        accountId: String,
-        request: Request,
-        onAuthorized: () -> Response,
-    ): Response {
-        val expectedToken =
-            accountRepository.findAdminToken(accountId)
-                ?: return Response(Status.NOT_FOUND).with(errorResponseLens of ErrorResponse("unknown account"))
-
-        return if (BearerToken.matches(BearerToken.extract(request), expectedToken)) {
-            onAuthorized()
-        } else {
-            Response(Status.UNAUTHORIZED).with(errorResponseLens of ErrorResponse("unauthorized"))
-        }
-    }
 
     /**
      * Filtering happens in SQL, before paging, so a filter describes the whole catalog rather than
      * whichever page happened to load - the reason these are query parameters and not something the
      * client applies to the rows it received.
      *
-     * Every value is validated up front and an unrecognised one is a 400, matching how `selected`
-     * has always behaved. Throwing [IllegalArgumentException] rather than returning an error type
+     * Every value is validated up front and an unrecognised one is a 400. A `galleryId` naming a
+     * gallery that is not this account's is treated as no match rather than an error, so the filter
+     * cannot be used to probe for another tenant's gallery ids. Throwing [IllegalArgumentException] rather than returning an error type
      * mirrors `SortOrder.fromQueryParam`'s contract in [GalleryRoutes]; the caller turns it into
      * the response body.
      */
     private fun catalogFilter(request: Request): CatalogFilter {
-        val selected =
-            when (selectedQuery(request)) {
+        val galleryId =
+            galleryIdQuery(request)?.let { raw ->
+                Uuid.parseOrNull(raw) ?: throw IllegalArgumentException("invalid galleryId value")
+            }
+        val inAnyGallery =
+            when (inAnyGalleryQuery(request)) {
                 null -> null
                 "true" -> true
                 "false" -> false
-                else -> throw IllegalArgumentException("invalid selected value")
+                else -> throw IllegalArgumentException("invalid inAnyGallery value")
             }
         val includeNotDigestible =
             when (includeNotDigestibleQuery(request)) {
@@ -267,14 +234,20 @@ class AdminCatalogRoutes(
         val unknown = mediaTypes - VALID_MEDIA_TYPES
         require(unknown.isEmpty()) { "invalid mediaType value: ${unknown.sorted().joinToString()}" }
 
-        return CatalogFilter(selected = selected, mediaTypes = mediaTypes, includeNotDigestible = includeNotDigestible)
+        return CatalogFilter(
+            galleryId = galleryId,
+            inAnyGallery = inAnyGallery,
+            mediaTypes = mediaTypes,
+            includeNotDigestible = includeNotDigestible,
+        )
     }
 
     private fun listCatalog(): ContractRoute =
         "/api/v1/admin/accounts" / accountIdPath / "catalog" meta {
             summary = "List a page of catalog entries for an account, optionally filtered"
             security = adminBearerSecurity
-            queries += selectedQuery
+            queries += galleryIdQuery
+            queries += inAnyGalleryQuery
             queries += includeNotDigestibleQuery
             queries += mediaTypeQuery
             queries += limitQuery
@@ -289,7 +262,7 @@ class AdminCatalogRoutes(
             )
         } bindContract Method.GET to { accountId, _ ->
             { request ->
-                authorize(accountId, request) {
+                authorizeAccount(accountRepository, accountId, request) {
                     runCatching { catalogFilter(request) }.fold(
                         onSuccess = { filter ->
                             val pageSize = limitQuery(request).coerceIn(1, MAX_PAGE_SIZE)
@@ -311,67 +284,17 @@ class AdminCatalogRoutes(
             }
         }
 
-    private fun updateSelections(): ContractRoute =
-        "/api/v1/admin/accounts" / accountIdPath / "catalog" / "selections" meta {
-            summary = "Bulk-select or deselect catalog entries by shortcode"
-            security = adminBearerSecurity
-            receiving(
-                selectionUpdateRequestLens to
-                    SelectionUpdateRequest(select = listOf("Cabc123XYZ"), deselect = listOf("Cdef456UVW")),
-            )
-            returning(
-                Status.OK,
-                selectionUpdateResponseLens to
-                    SelectionUpdateResponse(
-                        selected = listOf("Cabc123XYZ"),
-                        deselected = listOf("Cdef456UVW"),
-                        notFound = listOf("Cghi789RST"),
-                    ),
-            )
-        } bindContract Method.PATCH to { accountId, _, _ ->
-            { request ->
-                authorize(accountId, request) {
-                    val body = selectionUpdateRequestLens(request)
-                    val selectSet = body.select.toSet()
-                    val deselectSet = body.deselect.toSet()
-                    val overlap = selectSet intersect deselectSet
-
-                    if (overlap.isNotEmpty()) {
-                        Response(Status.BAD_REQUEST)
-                            .with(
-                                errorResponseLens of
-                                    ErrorResponse(
-                                        "shortcodes cannot be both selected and deselected: ${overlap.sorted()}",
-                                    ),
-                            )
-                    } else {
-                        val result = catalogRepository.updateSelection(accountId, selectSet, deselectSet)
-                        val requested = selectSet + deselectSet
-                        val notFound = requested - result.selectedShortcodes - result.deselectedShortcodes
-                        Response(Status.OK).with(
-                            selectionUpdateResponseLens of
-                                SelectionUpdateResponse(
-                                    selected = result.selectedShortcodes.toList(),
-                                    deselected = result.deselectedShortcodes.toList(),
-                                    notFound = notFound.toList(),
-                                ),
-                        )
-                    }
-                }
-            }
-        }
-
     /**
      * Outright delete: skips the retention grace period for the named items.
      *
      * Pathed under `catalog`, not `gallery`, because what it deletes is an item's *downloaded
      * media* - the catalog entry and its browse thumbnail survive, so the item stays listed here and
-     * can be selected again later. (Deleting the catalog row would achieve nothing anyway: it is an
+     * can be added to a gallery again later. (Deleting the catalog row would achieve nothing anyway: it is an
      * unconditional mirror of the Instagram feed, so the next sync re-inserts it.)
      *
      * Like `PATCH .../selections`, this writes only `instagram_media_catalog` columns and issues no
      * S3 call - `ingestion-service` still owns every deletion. The item leaves the gallery
-     * immediately because gallery visibility derives from `selected`; the bytes go on the next
+     * immediately because a gallery shows exactly its members; the bytes go on the next
      * ingestion cycle. Hence `202`, and hence `acceptedCount` rather than `deletedCount`.
      *
      * The request body travels on a DELETE, which is legal and which http4k handles. A client or
@@ -391,13 +314,13 @@ class AdminCatalogRoutes(
                         results =
                             listOf(
                                 MediaPurgeItemResult("Cabc123XYZ", "ACCEPTED"),
-                                MediaPurgeItemResult("Cdef456UVW", "NOT_IN_GALLERY"),
+                                MediaPurgeItemResult("Cdef456UVW", "NOT_DOWNLOADED"),
                             ),
                     ),
             )
         } bindContract Method.DELETE to { accountId, _, _ ->
             { request ->
-                authorize(accountId, request) {
+                authorizeAccount(accountRepository, accountId, request) {
                     val requested = mediaPurgeRequestLens(request).shortcodes
                     when {
                         requested.isEmpty() -> {
@@ -429,5 +352,5 @@ class AdminCatalogRoutes(
             }
         }
 
-    fun routes(): List<ContractRoute> = listOf(listCatalog(), updateSelections(), purgeMedia())
+    fun routes(): List<ContractRoute> = listOf(listCatalog(), purgeMedia())
 }
