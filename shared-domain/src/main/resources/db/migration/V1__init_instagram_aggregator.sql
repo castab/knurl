@@ -131,6 +131,10 @@ CREATE TABLE instagram_media_catalog (
 --   orphan_sweep_dry_run        (default false) log what would be deleted, delete nothing
 --   last_orphan_sweep_at                        epoch seconds; written by the sweep claim, not an
 --                                               operator knob (see SyncConfigurationRepository.claimIfElapsed)
+--   vanished_media_max_percent  (default 50)    refuse to remove catalog entries Instagram's feed no
+--                                               longer returned if they're more than this % of the
+--                                               account's catalog (a floor of 5 items always proceeds
+--                                               regardless of percentage - see SyncPipeline.shouldSkipVanishedRemoval)
 CREATE TABLE sync_configurations (
     key VARCHAR(50) PRIMARY KEY,
     value TEXT NOT NULL

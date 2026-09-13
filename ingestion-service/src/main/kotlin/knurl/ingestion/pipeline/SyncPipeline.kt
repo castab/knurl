@@ -30,6 +30,7 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
+import kotlin.uuid.Uuid
 
 /**
  * Matches `instagram.com/p/{shortcode}/` and `instagram.com/reel/{shortcode}/`, with or without
@@ -127,6 +128,36 @@ fun shouldDownload(
     existingIds: Set<String>,
 ): Boolean = mediaId in selectedIds && mediaId !in existingIds
 
+/**
+ * Below this many vanished items, [shouldSkipVanishedRemoval] never refuses to act, however large a
+ * fraction of the catalog they are - an account with 3 posts losing all 3 is completely ordinary
+ * and would otherwise trip a percentage guard on every genuine deletion of a small catalog.
+ */
+private const val VANISHED_MEDIA_MIN_COUNT_FLOOR = 5
+
+private const val DEFAULT_VANISHED_MEDIA_MAX_PERCENT = 50
+
+/**
+ * Whether a batch of media Instagram's feed no longer returned this cycle is too large a fraction
+ * of the account's existing catalog to trust as a genuine deletion, and should be left untouched
+ * for investigation instead.
+ *
+ * Above [VANISHED_MEDIA_MIN_COUNT_FLOOR], removing more than [maxPercent] of the catalog in a
+ * single cycle is treated as more likely an incomplete or anomalous API response - rate limiting,
+ * a permissions hiccup, a bug that returns a page short - than an account that genuinely deleted
+ * most of its own content in the fifteen minutes since the last sync. Pure/no I/O so it's
+ * unit-testable on its own; [SyncPipeline] owns reading the configured percent and logging.
+ */
+fun shouldSkipVanishedRemoval(
+    vanishedCount: Int,
+    existingCatalogCount: Int,
+    maxPercent: Int,
+): Boolean {
+    if (vanishedCount <= VANISHED_MEDIA_MIN_COUNT_FLOOR) return false
+    if (existingCatalogCount <= 0) return false
+    return vanishedCount * 100L > existingCatalogCount.toLong() * maxPercent
+}
+
 private const val TOKEN_REFRESH_THRESHOLD_HOURS = 24L
 private const val DEFAULT_RETENTION_DAYS = 30
 private const val EVICTION_CONCURRENCY = 2
@@ -156,16 +187,22 @@ fun thumbnailSourceUrl(item: MediaItem): String? {
 }
 
 /**
- * Orchestrates one ingestion cycle: refresh the Graph API token if it's close to expiring, sync
- * the account's entire media feed into the catalog (metadata only) while additionally downloading
- * and storing any catalog item that's both admin-`selected` and not yet in `instagram_posts`, then
- * run the retention sweep that deletes the media of items deselected longer ago than
+ * Orchestrates one ingestion cycle: refresh the Graph API token if it's close to expiring, sync the
+ * account's entire media feed into the catalog (metadata only) while additionally downloading and
+ * storing any catalog item that's both admin-`selected` and not yet in `instagram_posts`, remove
+ * any catalog entry (and downloaded post) for media Instagram's feed no longer returned this cycle,
+ * then run the retention sweep that deletes the media of items deselected longer ago than
  * `retention_days` (or explicitly purge-requested by an admin).
  *
  * Every paginated feed item is upserted into `instagram_media_catalog` unconditionally, regardless
  * of selection state - this is what powers the admin browse-and-select API in presentation-service.
  * Selection itself (`instagram_media_catalog.selected`) is never touched here; it's exclusively
  * set/cleared via `PATCH /api/v1/admin/accounts/{accountId}/catalog/selections`.
+ *
+ * "Vanished" removal (see [removeVanishedMedia]) is a distinct kind of deletion from retention: it
+ * fires when Instagram itself is the one saying an item no longer exists, so unlike deselection
+ * there is no grace period, no reselect race, and no respect for `is_pinned` - none of that matters
+ * once the source of truth no longer serves the media at all.
  */
 class SyncPipeline(
     private val authConfigRepository: AuthConfigRepository,
@@ -183,7 +220,8 @@ class SyncPipeline(
 
     suspend fun runOnce() {
         val accessToken = ensureFreshToken()
-        syncCatalogAndSelectedMedia(accessToken)
+        val presentMediaIds = syncCatalogAndSelectedMedia(accessToken)
+        removeVanishedMedia(presentMediaIds)
         runEviction()
     }
 
@@ -208,7 +246,14 @@ class SyncPipeline(
         return refreshed.accessToken
     }
 
-    private suspend fun syncCatalogAndSelectedMedia(accessToken: String) {
+    /**
+     * Returns every media id this cycle's *complete, successful* pagination sweep actually found -
+     * the set [removeVanishedMedia] treats as authoritative "still exists on Instagram". Returning
+     * normally is itself part of that contract: a page fetch throwing partway through propagates out
+     * of this function (and out of [runOnce]) before ever reaching a caller, so a partial listing
+     * can never be mistaken for a complete one.
+     */
+    private suspend fun syncCatalogAndSelectedMedia(accessToken: String): Set<String> {
         val existingIds = postRepository.existingMediaIds(targetUserId)
         val selectedIds = catalogRepository.selectedMediaIds(targetUserId)
         val syncedItems = mutableListOf<MediaItem>()
@@ -228,6 +273,8 @@ class SyncPipeline(
         // and would then sit unthumbnailed for a full cycle before being picked up.
         val needsThumbnailIds = catalogRepository.mediaIdsNeedingThumbnail(targetUserId)
         fetchThumbnailsConcurrently(syncedItems.filter { it.id in needsThumbnailIds })
+
+        return syncedItems.map { it.id }.toSet()
     }
 
     /**
@@ -408,6 +455,62 @@ class SyncPipeline(
     }
 
     /**
+     * Removes the catalog entry - and, if one was ever downloaded, the post and its S3 objects - for
+     * every media id [presentMediaIds] says Instagram's own feed no longer returned this cycle.
+     *
+     * This is a distinct kind of deletion from [runEviction]'s retention sweep, and deliberately
+     * skips every protection that sweep has: no grace period (there is nothing to reverse - the
+     * media isn't coming back by reselecting it, since Instagram itself doesn't have it to
+     * re-fetch), no reselect race to guard against, and no respect for `is_pinned` (a pin expresses
+     * "don't let retention reap this," not "pretend Instagram still has it"). All of that only made
+     * sense when the item's absence was a choice made in this system; here the absence is a fact
+     * reported by the one API that actually knows.
+     *
+     * Guarded by [shouldSkipVanishedRemoval] against trusting an anomalous cycle too far: if the
+     * fraction of the catalog that vanished looks too large, nothing is deleted and the anomaly is
+     * logged instead, left for the next cycle once (if it was transient) it has cleared.
+     */
+    private fun removeVanishedMedia(presentMediaIds: Set<String>) {
+        val existingCatalogIds = catalogRepository.allMediaIds(targetUserId)
+        val vanishedIds = existingCatalogIds - presentMediaIds
+        if (vanishedIds.isEmpty()) return
+
+        val maxPercent = syncConfigurationRepository.getInt("vanished_media_max_percent", DEFAULT_VANISHED_MEDIA_MAX_PERCENT)
+        if (shouldSkipVanishedRemoval(vanishedIds.size, existingCatalogIds.size, maxPercent)) {
+            log.error(
+                "Refusing to remove ${vanishedIds.size} of ${existingCatalogIds.size} catalog entries for " +
+                    "$targetUserId that Instagram's feed no longer returned this cycle - that fraction is too " +
+                    "large to trust from a single sync, and is more likely an incomplete API response than a " +
+                    "genuine mass deletion on Instagram. Investigate, or raise vanished_media_max_percent in " +
+                    "sync_configurations if the account really did lose that much.",
+            )
+            return
+        }
+
+        val candidates = postRepository.deleteVanished(targetUserId, vanishedIds)
+        log.info(
+            "Removed ${vanishedIds.size} catalog entr${if (vanishedIds.size == 1) "y" else "ies"} no longer " +
+                "on Instagram for $targetUserId (${candidates.size} had downloaded media, now deleted from " +
+                "the gallery and the bucket)",
+        )
+
+        candidates.forEach { candidate ->
+            if (candidate.mediaPaths.isEmpty()) {
+                log.warn("Vanished post ${candidate.id} had no media paths; deleted the row only")
+            } else {
+                runCatching { deleteS3Objects(candidate.id, candidate.mediaPaths) }
+                    .onFailure {
+                        log.warn(
+                            "Failed to delete S3 objects for vanished post ${candidate.id}; " +
+                                "the orphan sweeper will reap them",
+                            it,
+                        )
+                    }
+            }
+        }
+    }
+
+    /**
      * Deletes the media of posts whose retention clock has run out - deselected longer ago than
      * `retention_days`, or explicitly purge-requested by an admin.
      *
@@ -455,14 +558,29 @@ class SyncPipeline(
             return
         }
 
-        // A post with no media rows has nothing to delete from S3, and DeleteObjects rejects an empty
-        // object list outright (MalformedXML).
-        val objectIds = candidate.mediaPaths.map { ObjectIdentifier.builder().key(it).build() }
-        if (objectIds.isEmpty()) {
+        if (candidate.mediaPaths.isEmpty()) {
             log.warn("Eviction candidate ${candidate.id} had no media paths; deleted the row only")
             return
         }
 
+        deleteS3Objects(candidate.id, candidate.mediaPaths)
+    }
+
+    /**
+     * Batch-deletes [mediaPaths] from the bucket, tagging any error with [candidateId] for the log.
+     * Shared by [evictOne] and [removeVanishedMedia] - both delete their DB rows first and then call
+     * this, so a failure here always leaves an orphaned S3 object rather than a dangling DB
+     * reference, and [knurl.ingestion.pipeline.OrphanSweeper] is what reaps it.
+     *
+     * Callers are responsible for skipping this when [mediaPaths] is empty: `DeleteObjects` rejects
+     * an empty object list outright (`MalformedXML`), and each caller's own log message for that
+     * case differs in what it's reasonable to conclude from it.
+     */
+    private fun deleteS3Objects(
+        candidateId: Uuid,
+        mediaPaths: List<String>,
+    ) {
+        val objectIds = mediaPaths.map { ObjectIdentifier.builder().key(it).build() }
         val deleteResponse =
             s3Client.deleteObjects(
                 DeleteObjectsRequest
@@ -472,6 +590,6 @@ class SyncPipeline(
                     .build(),
             )
 
-        check(deleteResponse.errors().isEmpty()) { "S3 delete errors for ${candidate.id}: ${deleteResponse.errors()}" }
+        check(deleteResponse.errors().isEmpty()) { "S3 delete errors for $candidateId: ${deleteResponse.errors()}" }
     }
 }

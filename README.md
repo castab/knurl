@@ -71,6 +71,8 @@ To skip the grace period, use `DELETE /api/v1/admin/accounts/{accountId}/catalog
 
 A separate **orphan sweep** runs about once a day and deletes any object in the bucket that the database has no record of — files left behind by an upload that failed partway through a carousel, for instance. This is what upholds the invariant that the database knows about every object in the bucket. Because object keys carry no account segment, the sweep necessarily spans every account in the database, which means **one bucket per database**: pointing two deployments with separate databases at a shared bucket would have each sweep delete the other's files.
 
+**A post that disappears from Instagram itself is removed right away**, with none of the above waiting. Every sync cycle, `ingestion-service` compares what Instagram's feed actually returned against what's already in the catalog; anything missing — deleted on Instagram, or the account it belonged to made private — is deleted from the catalog immediately, and if it had been downloaded, from the gallery and the bucket too. There's no grace period and reselecting doesn't help, because the media genuinely isn't there to re-fetch — that's also why this ignores `is_pinned`. The one safeguard is a sanity check: if an implausibly large fraction of the catalog vanishes in a single cycle (more than `vanished_media_max_percent`, above a small floor that always lets a handful of items through), nothing is deleted and an error is logged instead, since that's more likely a broken sync than a genuine mass deletion.
+
 All of it is tuned by **global** (not per-account) runtime-configurable rows in the `sync_configurations` table, applied independently within each account's own post pool. Change them with plain SQL; no redeploy needed.
 
 | Key | Default | Meaning |
@@ -81,6 +83,7 @@ All of it is tuned by **global** (not per-account) runtime-configurable rows in 
 | `orphan_sweep_max_deletes` | `1000` | Cap on objects deleted per sweep. Hitting it is logged loudly. |
 | `orphan_sweep_dry_run` | `false` | Set to `true` to have the sweep log what it *would* delete and delete nothing. Worth doing once on a new deployment. |
 | `last_orphan_sweep_at` | — | Written by the sweep itself (epoch seconds), not an operator knob. Deleting this row forces the next cycle to sweep. |
+| `vanished_media_max_percent` | `50` | Above a small floor of items, refuse to remove more than this percent of an account's catalog in one cycle for media Instagram's feed no longer returned — logged as an error rather than silently trusted. |
 
 **`is_pinned` has no API or UI.** It exempts a post from time-based retention — but *not* from an explicit `DELETE`, since that is an active instruction rather than a passive safety net. It is never written by any code path in this repository; the only way to pin a post today is a manual `UPDATE instagram_posts SET is_pinned = TRUE WHERE id = '…'` against the database.
 
