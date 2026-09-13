@@ -84,6 +84,10 @@
     return els.accountId.value.trim();
   }
 
+  function publicToken() {
+    return els.apiBearerToken.value.trim();
+  }
+
   // ---- tabs ---------------------------------------------------------------
 
   els.tabButtons.forEach((btn) => {
@@ -247,11 +251,15 @@
       showError(els.galleryError, "Pick a gallery first. If the list is empty, create one on the Admin tab.");
       return;
     }
+    if (!publicToken()) {
+      showError(els.galleryError, "Enter the public bearer token to load galleries.");
+      return;
+    }
     els.galleryLoad.disabled = true;
     els.galleryStatus.textContent = "Loading...";
     els.galleryGrid.innerHTML = "";
     try {
-      const body = await apiFetch(url ?? galleryFirstPageUrl());
+      const body = await apiFetch(url ?? galleryFirstPageUrl(), { token: publicToken() });
       renderGallery(body.data);
       galleryLinks = renderPagination(
         {
@@ -328,7 +336,7 @@
 
   async function trackEvent(id, event, btn) {
     showError(els.galleryError, "");
-    const token = els.apiBearerToken.value.trim();
+    const token = publicToken();
     if (!token) {
       showError(els.galleryError, "Enter the public bearer token to track events.");
       return;
@@ -710,11 +718,17 @@
 
   async function loadGalleries() {
     if (!accountId()) return;
+    const token = publicToken();
+    if (!token) {
+      showError(els.galleryError, "Enter the public bearer token to load galleries.");
+      return;
+    }
     const previousPublic = els.gallerySelect.value;
     const previousAdmin = els.adminGallerySelect.value;
     try {
       const body = await apiFetch(
         `/api/v1/accounts/${encodeURIComponent(accountId())}/galleries?limit=50&page=1`,
+        { token },
       );
       galleries = body.data;
       renderGallerySelect(els.gallerySelect, previousPublic);

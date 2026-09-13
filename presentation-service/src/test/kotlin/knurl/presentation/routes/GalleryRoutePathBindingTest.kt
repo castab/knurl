@@ -100,11 +100,18 @@ class GalleryRoutePathBindingTest :
                 )
 
         test("gallery content binds {galleryId} to the fourth segment, not the literal before it") {
-            invalidGalleryIdResponse(Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries/$GALLERY")) shouldBe false
+            invalidGalleryIdResponse(
+                Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries/$GALLERY")
+                    .header("Authorization", "Bearer token"),
+            ) shouldBe false
         }
 
         test("gallery content rejects a malformed gallery id with 400, never a 500 from the driver") {
-            val response = app(Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries/not-a-uuid"))
+            val response =
+                app(
+                    Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries/not-a-uuid")
+                        .header("Authorization", "Bearer token"),
+                )
 
             response.status shouldBe Status.BAD_REQUEST
             response.bodyString() shouldContain "invalid gallery id"
@@ -134,10 +141,24 @@ class GalleryRoutePathBindingTest :
         test("the galleries list route exists separately from the content route") {
             // Would reach the database if bound correctly; a 404 here would mean the list route was
             // shadowed by the content route treating "galleries" as a gallery id.
-            val result = runCatching { app(Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries")) }
+            val result =
+                runCatching {
+                    app(
+                        Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries")
+                            .header("Authorization", "Bearer token"),
+                    )
+                }
             result.fold(
                 onSuccess = { it.status shouldBe Status.INTERNAL_SERVER_ERROR },
                 onFailure = { },
             )
+        }
+
+        test("gallery reads reject an absent or incorrect public bearer token before touching the database") {
+            app(Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries")).status shouldBe Status.UNAUTHORIZED
+            app(
+                Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries/$GALLERY")
+                    .header("Authorization", "Bearer wrong"),
+            ).status shouldBe Status.UNAUTHORIZED
         }
     })

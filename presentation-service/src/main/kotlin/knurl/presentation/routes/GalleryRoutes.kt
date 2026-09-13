@@ -193,9 +193,9 @@ private val EXAMPLE_GALLERY =
     )
 
 /**
- * Public, read-only gallery surface - one presentation-service deployment serves every ingested
- * account, so `accountId` (public, non-secret Graph API business account id) is a path segment
- * rather than something configured once at startup.
+ * Bearer-protected, read-only gallery surface - one presentation-service deployment serves every
+ * ingested account, so `accountId` (public, non-secret Graph API business account id) is a path
+ * segment rather than something configured once at startup.
  *
  * An account has any number of named galleries and no default one, so content is always addressed
  * by gallery id. That id is immutable: renaming a gallery never breaks a link already pointing at
@@ -245,9 +245,10 @@ class GalleryRoutes(
         return onFound(gallery)
     }
 
-    private fun listGalleries(): ContractRoute =
+    private fun listGalleries(bearerAuth: BearerAuth): ContractRoute =
         "/api/v1/accounts" / accountIdPath / "galleries" meta {
             summary = "List an account's galleries"
+            security = bearerAuth.security
             queries += limitQuery
             queries += pageQuery
             returning(
@@ -272,9 +273,10 @@ class GalleryRoutes(
             }
         }
 
-    private fun listGalleryContent(): ContractRoute =
+    private fun listGalleryContent(bearerAuth: BearerAuth): ContractRoute =
         "/api/v1/accounts" / accountIdPath / "galleries" / galleryIdPath meta {
             summary = "List a page of one gallery's posts, sorted by recency or view count"
+            security = bearerAuth.security
             queries += sortQuery
             queries += limitQuery
             queries += pageQuery
@@ -360,5 +362,6 @@ class GalleryRoutes(
             }
         }
 
-    fun routes(bearerAuth: BearerAuth): List<ContractRoute> = listOf(listGalleries(), listGalleryContent(), trackEvent(bearerAuth))
+    fun routes(bearerAuth: BearerAuth): List<ContractRoute> =
+        listOf(listGalleries(bearerAuth), listGalleryContent(bearerAuth), trackEvent(bearerAuth))
 }
