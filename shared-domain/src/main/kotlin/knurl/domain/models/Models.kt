@@ -88,6 +88,14 @@ data class InstagramPostUpsert(
  * [thumbnailPath] is null until a thumbnail has been fetched and stored (or the fetch hasn't
  * succeeded yet - retried every sync cycle, no permanent-failure tracking). Not admin-writable;
  * written only by the ingestion pipeline's thumbnail fetch, independent of [selected].
+ *
+ * [deselectedAt] and [purgeRequestedAt] are the deletion clock for the item's *downloaded media*
+ * (its [InstagramPost] row and S3 objects) - never for this catalog row itself, which always
+ * survives so the item stays browsable and re-selectable. [deselectedAt] is stamped when an admin
+ * deselects and starts the configured grace period; [purgeRequestedAt] is stamped by the admin
+ * purge endpoint and skips that grace period entirely. Both are cleared on reselect, which is what
+ * makes a reselected item ineligible for deletion and restarts the countdown from scratch if it is
+ * ever deselected again.
  */
 data class CatalogEntry(
     val instagramMediaId: String,
@@ -100,6 +108,8 @@ data class CatalogEntry(
     val selected: Boolean,
     val notDigestibleReason: String?,
     val thumbnailPath: String?,
+    val deselectedAt: Instant?,
+    val purgeRequestedAt: Instant?,
     val updatedAt: Instant,
 )
 
@@ -125,6 +135,20 @@ data class CatalogUpsert(
 data class CatalogSelectionResult(
     val selectedShortcodes: Set<String>,
     val deselectedShortcodes: Set<String>,
+)
+
+/**
+ * Result of [knurl.domain.repositories.CatalogRepository.requestPurge].
+ *
+ * [accepted] had both a catalog row and an `instagram_posts` row, so media will actually be
+ * deleted; [notInGallery] had a catalog row but nothing downloaded, so there was nothing to
+ * delete (it was still deselected defensively). Requested shortcodes absent from both were not
+ * found for this account. Split this way rather than returned as a status-per-shortcode map so
+ * the repository stays free of HTTP-facing vocabulary - the route maps these to its own statuses.
+ */
+data class PurgeRequestResult(
+    val accepted: Set<String>,
+    val notInGallery: Set<String>,
 )
 
 data class SyncConfiguration(

@@ -8,8 +8,10 @@ import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.AuthConfigRepository
 import knurl.domain.repositories.CatalogRepository
 import knurl.domain.repositories.InstagramPostRepository
+import knurl.domain.repositories.ObjectKeyRepository
 import knurl.domain.repositories.SyncConfigurationRepository
 import knurl.ingestion.client.MetaGraphClient
+import knurl.ingestion.pipeline.OrphanSweeper
 import knurl.ingestion.pipeline.SyncPipeline
 import knurl.ingestion.processor.MediaProcessor
 import kotlinx.coroutines.delay
@@ -67,6 +69,7 @@ fun main() =
         val postRepository = InstagramPostRepository(jdbi)
         val catalogRepository = CatalogRepository(jdbi)
         val syncConfigurationRepository = SyncConfigurationRepository(jdbi)
+        val objectKeyRepository = ObjectKeyRepository(jdbi)
 
         accountRepository.register(config.instagram.businessAccountId, config.instagram.adminToken)
 
@@ -96,6 +99,13 @@ fun main() =
                 targetUserId = config.instagram.businessAccountId,
                 initialAccessToken = config.instagram.accessToken,
             )
+        val orphanSweeper =
+            OrphanSweeper(
+                objectKeyRepository = objectKeyRepository,
+                syncConfigurationRepository = syncConfigurationRepository,
+                s3Client = s3Client,
+                bucketName = config.s3.bucketName,
+            )
 
         Runtime.getRuntime().addShutdownHook(
             Thread {
@@ -109,6 +119,9 @@ fun main() =
         val intervalMs = config.intervalSeconds * 1000
         while (true) {
             runCatching { syncPipeline.runOnce() }.onFailure { log.error("Sync cycle failed", it) }
+            // Separate from the sync cycle, and after it: the sweep runs on its own (much longer)
+            // cadence, and a failure to reap orphans must never cost us an ingestion cycle.
+            runCatching { orphanSweeper.sweepIfDue() }.onFailure { log.error("Orphan sweep failed", it) }
             if (config.runOnce) break
             delay(intervalMs)
         }

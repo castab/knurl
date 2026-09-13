@@ -226,7 +226,9 @@
                     "timestamp" : "2024-01-01T00:00:00Z",
                     "selected" : false,
                     "notDigestibleReason" : "copyright",
-                    "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp"
+                    "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
+                    "deselectedAt" : "2024-01-02T00:00:00Z",
+                    "purgeRequestedAt" : "2024-01-03T00:00:00Z"
                   } ],
                   "pagination" : {
                     "totalRecords" : 100,
@@ -254,6 +256,68 @@
           "accountAdminBearer" : [ ]
         } ],
         "operationId" : "getApiV1AdminAccounts_accountId_Catalog",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/catalog/media" : {
+      "delete" : {
+        "summary" : "Delete the downloaded media of catalog entries outright, skipping the retention grace period",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "example" : {
+                "shortcodes" : [ "Cabc123XYZ", "Cdef456UVW" ]
+              },
+              "schema" : {
+                "$ref" : "#/components/schemas/MediaPurgeRequest",
+                "example" : null,
+                "format" : null
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "202" : {
+            "description" : "Accepted",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "requestedCount" : 2,
+                  "acceptedCount" : 1,
+                  "results" : [ {
+                    "shortcode" : "Cabc123XYZ",
+                    "status" : "ACCEPTED"
+                  }, {
+                    "shortcode" : "Cdef456UVW",
+                    "status" : "NOT_IN_GALLERY"
+                  } ]
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/MediaPurgeResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "deleteApiV1AdminAccounts_accountId_CatalogMedia",
         "deprecated" : false,
         "callbacks" : null
       }
@@ -623,7 +687,9 @@
               "timestamp" : "2024-01-01T00:00:00Z",
               "selected" : false,
               "notDigestibleReason" : "copyright",
-              "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp"
+              "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
+              "deselectedAt" : "2024-01-02T00:00:00Z",
+              "purgeRequestedAt" : "2024-01-03T00:00:00Z"
             } ],
             "format" : null,
             "type" : "array"
@@ -643,7 +709,9 @@
             "timestamp" : "2024-01-01T00:00:00Z",
             "selected" : false,
             "notDigestibleReason" : "copyright",
-            "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp"
+            "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
+            "deselectedAt" : "2024-01-02T00:00:00Z",
+            "purgeRequestedAt" : "2024-01-03T00:00:00Z"
           } ],
           "pagination" : {
             "totalRecords" : 100,
@@ -703,6 +771,16 @@
             "example" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
             "format" : null,
             "type" : [ "string", "null" ]
+          },
+          "deselectedAt" : {
+            "example" : "2024-01-02T00:00:00Z",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "purgeRequestedAt" : {
+            "example" : "2024-01-03T00:00:00Z",
+            "format" : null,
+            "type" : [ "string", "null" ]
           }
         },
         "example" : {
@@ -713,7 +791,9 @@
           "timestamp" : "2024-01-01T00:00:00Z",
           "selected" : false,
           "notDigestibleReason" : "copyright",
-          "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp"
+          "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
+          "deselectedAt" : "2024-01-02T00:00:00Z",
+          "purgeRequestedAt" : "2024-01-03T00:00:00Z"
         },
         "format" : null,
         "type" : "object",
@@ -786,6 +866,88 @@
         "format" : null,
         "type" : "object",
         "required" : [ "deselect", "select" ]
+      },
+      "MediaPurgeResponse" : {
+        "properties" : {
+          "requestedCount" : {
+            "example" : 2,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "acceptedCount" : {
+            "example" : 1,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "results" : {
+            "items" : {
+              "$ref" : "#/components/schemas/MediaPurgeItemResult"
+            },
+            "example" : [ {
+              "shortcode" : "Cabc123XYZ",
+              "status" : "ACCEPTED"
+            }, {
+              "shortcode" : "Cdef456UVW",
+              "status" : "NOT_IN_GALLERY"
+            } ],
+            "format" : null,
+            "type" : "array"
+          }
+        },
+        "example" : {
+          "requestedCount" : 2,
+          "acceptedCount" : 1,
+          "results" : [ {
+            "shortcode" : "Cabc123XYZ",
+            "status" : "ACCEPTED"
+          }, {
+            "shortcode" : "Cdef456UVW",
+            "status" : "NOT_IN_GALLERY"
+          } ]
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "acceptedCount", "requestedCount", "results" ]
+      },
+      "MediaPurgeItemResult" : {
+        "properties" : {
+          "shortcode" : {
+            "example" : "Cabc123XYZ",
+            "format" : null,
+            "type" : "string"
+          },
+          "status" : {
+            "example" : "ACCEPTED",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "shortcode" : "Cabc123XYZ",
+          "status" : "ACCEPTED"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "shortcode", "status" ]
+      },
+      "MediaPurgeRequest" : {
+        "properties" : {
+          "shortcodes" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cabc123XYZ", "Cdef456UVW" ],
+            "format" : null,
+            "type" : "array"
+          }
+        },
+        "example" : {
+          "shortcodes" : [ "Cabc123XYZ", "Cdef456UVW" ]
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "shortcodes" ]
       }
     },
     "securitySchemes" : {

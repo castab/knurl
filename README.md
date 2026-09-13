@@ -3,7 +3,7 @@
 Knurl is a low-memory Instagram media aggregation engine written in Kotlin. It's a monorepo of two long-running JVM services that share a Postgres database and an S3-compatible object bucket, with multi-account support built in: several `ingestion-service` instances (one per Instagram account) can share one database, and a single `presentation-service` deployment serves/manages every one of those accounts:
 
 - **`shared-domain`** — Flyway migrations, JDBI repositories, connection pool setup, and the plain data classes both services depend on.
-- **`ingestion-service`** — one process per Instagram account; a daemon (or cron-triggered, one-shot process) that catalogs the account's entire media feed, downloads/stores admin-selected posts, and runs a sliding-window retention eviction loop.
+- **`ingestion-service`** — one process per Instagram account; a daemon (or cron-triggered, one-shot process) that catalogs the account's entire media feed, downloads/stores admin-selected posts, enforces retention, and sweeps orphaned objects out of the bucket.
 - **`presentation-service`** — a multi-tenant read API (built on [http4k](https://www.http4k.org)) that serves any registered account's gallery as JSON with S3 presigned URLs, plus a Bearer-secured analytics tracking endpoint and a per-account-authenticated admin API for curating what gets synced.
 
 Both services are designed for a strict **128MB heap** (`-Xmx128m`), so all file I/O and remote asset downloads are streamed rather than buffered — see [`AGENTS.md`](./AGENTS.md) for the exact rules if you're modifying this code. The flag itself is not set by anything in this repo; set it on your deployment platform (e.g. `JAVA_TOOL_OPTIONS=-Xmx128m`).
@@ -61,14 +61,28 @@ Each service reads its config from a bundled `application.conf` (HOCON), which c
 
 **Token exposure:** `API_BEARER_TOKEN` guards a browser-called endpoint (`POST .../gallery/track`), so any real browser client must ship it to the browser. Treat it as a rate-limiting speed bump against casual abuse, not as authentication — it is not a secret once a public gallery page uses it. A per-account `ADMIN_TOKEN` is a genuine secret: it is never embedded in a page, and the bundled UI keeps it only in `sessionStorage` for the life of the tab.
 
-Which posts get synced is admin-curated via an API, not an environment variable or config row — see "Curating what appears in the gallery" below. How many are retained is a **global** (not per-account) pair of runtime-configurable rows in the `sync_configurations` table, applied independently within each account's own post pool:
+Which posts get synced is admin-curated via an API, not an environment variable or config row — see "Curating what appears in the gallery" below.
 
-- `max_recent_count` — how many non-pinned posts to always keep, ranked by recency (default 100 if unset).
-- `max_view_count` — how many non-pinned posts to always keep, ranked by view count (default 50 if unset).
+### Retention and deletion
 
-A post survives eviction if it's pinned (`is_pinned = true`), **or** currently admin-selected, **or** in either top-N set above. Because `ingestion-service` only ever downloads admin-selected items, in normal operation the retention windows act as a dormant safety net: the posts they actually reap are ones that were later *deselected*. Eviction is deliberately forbidden from deleting a currently-selected post, because `SyncPipeline` would re-download it on the very next cycle.
+The gallery shows exactly the items that are currently selected. **Deselecting removes an item from the gallery immediately**, but its downloaded media is kept in the bucket for a grace period (default 30 days) so the decision stays reversible: reselect inside that window and the item reappears with no re-download, because the files never left. Once the grace period elapses, the post row and its S3 objects are deleted together on the next ingestion cycle. Reselecting clears the clock entirely, so if the item is ever deselected again the countdown starts fresh rather than resuming.
 
-**`is_pinned` has no API or UI.** It is read by the eviction query but is never written by any code path in this repository; the only way to pin a post today is a manual `UPDATE instagram_posts SET is_pinned = TRUE WHERE id = '…'` against the database.
+To skip the grace period, use `DELETE /api/v1/admin/accounts/{accountId}/catalog/media` (below). The catalog entry and its browse thumbnail survive either way, so a deleted item stays listed in the admin catalog and can be selected again later to download it afresh.
+
+A separate **orphan sweep** runs about once a day and deletes any object in the bucket that the database has no record of — files left behind by an upload that failed partway through a carousel, for instance. This is what upholds the invariant that the database knows about every object in the bucket. Because object keys carry no account segment, the sweep necessarily spans every account in the database, which means **one bucket per database**: pointing two deployments with separate databases at a shared bucket would have each sweep delete the other's files.
+
+All of it is tuned by **global** (not per-account) runtime-configurable rows in the `sync_configurations` table, applied independently within each account's own post pool. Change them with plain SQL; no redeploy needed.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `retention_days` | `30` | Days between deselecting an item and its media being deleted. |
+| `orphan_sweep_interval_hours` | `24` | Minimum gap between full bucket sweeps. |
+| `orphan_grace_minutes` | `60` | An object younger than this is never treated as an orphan, so an upload still in progress is never deleted. |
+| `orphan_sweep_max_deletes` | `1000` | Cap on objects deleted per sweep. Hitting it is logged loudly. |
+| `orphan_sweep_dry_run` | `false` | Set to `true` to have the sweep log what it *would* delete and delete nothing. Worth doing once on a new deployment. |
+| `last_orphan_sweep_at` | — | Written by the sweep itself (epoch seconds), not an operator knob. Deleting this row forces the next cycle to sweep. |
+
+**`is_pinned` has no API or UI.** It exempts a post from time-based retention — but *not* from an explicit `DELETE`, since that is an active instruction rather than a passive safety net. It is never written by any code path in this repository; the only way to pin a post today is a manual `UPDATE instagram_posts SET is_pinned = TRUE WHERE id = '…'` against the database.
 
 ## Local development with Docker Compose
 
@@ -81,6 +95,8 @@ docker compose down -v    # stop and wipe all data when you want a clean slate
 ```
 
 MinIO's web console is at http://localhost:9001 (login `knurl` / `knurl-dev-secret`) if you want to browse uploaded objects.
+
+> **Schema changes are folded into `V1__init_instagram_aggregator.sql` rather than stacked as new migrations**, because there is no production data to preserve yet. Flyway validates checksums, so a database that already ran an older `V1` will **fail to start** after one of these edits. Reset it (`docker compose down -v`, or drop the schema on a deployed database) — the data is re-derivable: `ingestion-service` re-catalogs the whole feed on its next cycle. Note that selections are *not* re-derivable and will need re-making. Once real data exists that matters, switch to stacking `V2`, `V3`, … instead.
 
 Both services load `application-local.conf` (shared dev config, tracked in git) on startup, which already matches the credentials above. For `ingestion-service`, you'll also need Instagram credentials:
 
@@ -126,6 +142,8 @@ The Graph API has no endpoint to resolve an arbitrary shortcode to a media id di
 2. `PATCH /api/v1/admin/accounts/{accountId}/catalog/selections` with the shortcodes to select/deselect (see the API reference below).
 3. On the next sync cycle, `ingestion-service` downloads and stores any newly-selected, not-yet-synced item.
 
+Deselecting takes effect immediately — the item leaves the gallery on the next request, without waiting for a sync cycle — and is reversible for the length of the retention window. To remove something and its files without waiting out that window, `DELETE .../catalog/media`. Either way the catalog entry survives, so nothing is ever permanently lost from the browse list. See [Retention and deletion](#retention-and-deletion).
+
 `{accountId}` is the Graph API business account id (`INSTAGRAM_BUSINESS_ACCOUNT_ID` / `businessAccountId`) — public, non-secret, and safe to put in a URL. Both admin endpoints require `Authorization: Bearer <that account's ADMIN_TOKEN>`; a token valid for one account can never act on another account's catalog.
 
 ## API
@@ -138,7 +156,27 @@ The Graph API has no endpoint to resolve an arbitrary shortcode to a media id di
   - `includeNotDigestible=true|false` — defaults to `true`; `false` hides items ingestion has flagged as never downloadable.
 
   Any unrecognised filter value returns `400`. `404` for an unregistered account, `401` for the wrong token.
-- `PATCH /api/v1/admin/accounts/{accountId}/catalog/selections` — same auth. Body: `{ "select": ["Cabc123XYZ"], "deselect": [] }`. Returns `{ "selected": [...], "deselected": [...], "notFound": [...] }` (a typo'd shortcode shows up in `notFound`, the rest of the request still applies).
+  Each item also carries `deselectedAt` and `purgeRequestedAt` — non-null means its downloaded media is on a deletion clock (see [Retention and deletion](#retention-and-deletion)).
+- `PATCH /api/v1/admin/accounts/{accountId}/catalog/selections` — same auth. Body: `{ "select": ["Cabc123XYZ"], "deselect": [] }`. Returns `{ "selected": [...], "deselected": [...], "notFound": [...] }` (a typo'd shortcode shows up in `notFound`, the rest of the request still applies). Deselecting starts the retention clock; selecting clears it.
+- `DELETE /api/v1/admin/accounts/{accountId}/catalog/media` — same auth. Deletes the downloaded media of the named items outright, skipping the retention grace period. Body: `{ "shortcodes": ["Cabc123XYZ", "Cdef456UVW"] }` — at most 100 per request; empty or over-cap returns `400`.
+
+  Returns **`202 Accepted`**, not `200`, with a status for every requested shortcode:
+
+  ```json
+  {
+    "requestedCount": 3,
+    "acceptedCount": 1,
+    "results": [
+      { "shortcode": "Cabc123XYZ", "status": "ACCEPTED" },
+      { "shortcode": "Cdef456UVW", "status": "NOT_IN_GALLERY" },
+      { "shortcode": "Cghi789RST", "status": "NOT_FOUND" }
+    ]
+  }
+  ```
+
+  `ACCEPTED` means the item had downloaded media; `NOT_IN_GALLERY` that it exists in the catalog but had nothing downloaded to delete; `NOT_FOUND` that this account has no such shortcode. `results` follows the order you asked in, so it can be zipped positionally with your request.
+
+  The response is `202`, and the field is `acceptedCount` rather than `deletedCount`, because the deletion is not finished when you get it: the items leave the gallery immediately, but `presentation-service` never touches the bucket — `ingestion-service` deletes the files on its next cycle (within `INGESTION_INTERVAL_SECONDS`, default 15 minutes). The catalog entry and its browse thumbnail survive, so the item stays listed and can be selected again later to download it afresh.
 - `GET /openapi.json` — the generated OpenAPI 3 contract for the above.
 
 ### Paginated responses

@@ -2,6 +2,7 @@ package knurl.presentation.routes
 
 import knurl.domain.models.CatalogEntry
 import knurl.domain.models.CatalogFilter
+import knurl.domain.models.PurgeRequestResult
 import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.CatalogRepository
 import knurl.presentation.auth.BearerToken
@@ -41,6 +42,20 @@ data class AdminCatalogItemResponse(
     val notDigestibleReason: String? = null,
     /** Presigned GET URL for the cheap catalog-browse thumbnail, or null if none has been fetched yet. */
     val thumbnailUrl: String? = null,
+    /**
+     * When this item was deselected, or null if it is selected (or never was). Non-null means its
+     * downloaded media is on a deletion clock and will be removed once the configured retention
+     * period has elapsed - until then the decision is still free to reverse, because reselecting
+     * clears this and costs no re-download.
+     */
+    val deselectedAt: String? = null,
+    /**
+     * When an admin requested an outright purge, or null if none is pending. Non-null means the
+     * grace period above is being skipped and the media goes on the next ingestion cycle. The
+     * catalog entry itself always survives either way, so the item stays listed here and can be
+     * selected again (which re-downloads it fresh).
+     */
+    val purgeRequestedAt: String? = null,
 )
 
 @Serializable
@@ -62,12 +77,73 @@ data class SelectionUpdateResponse(
     val notFound: List<String>,
 )
 
+@Serializable
+data class MediaPurgeRequest(
+    val shortcodes: List<String> = emptyList(),
+)
+
+/**
+ * Outcome for one requested shortcode.
+ *
+ * - `ACCEPTED` - the item had downloaded media; it has left the gallery already and its S3 objects
+ *   are deleted by the next ingestion cycle.
+ * - `NOT_IN_GALLERY` - the item exists in the catalog but nothing was ever downloaded for it (or it
+ *   was purged previously), so there is nothing to delete. It is deselected anyway, defensively, so
+ *   a stale selection cannot cause a download next cycle.
+ * - `NOT_FOUND` - no catalog entry with that shortcode for this account.
+ */
+@Serializable
+data class MediaPurgeItemResult(
+    val shortcode: String,
+    val status: String,
+)
+
+/**
+ * `acceptedCount` rather than `deletedCount`: `presentation-service` never touches the bucket, so
+ * the bytes are still there when this response is written - ingestion deletes them on its next
+ * cycle. Naming the field for a deletion that has not happened yet would be a false claim, which is
+ * also why the endpoint answers `202 Accepted` rather than `200 OK`. What *is* immediate is the
+ * item leaving the gallery, since gallery visibility is derived from `selected`.
+ */
+@Serializable
+data class MediaPurgeResponse(
+    val requestedCount: Int,
+    val acceptedCount: Int,
+    val results: List<MediaPurgeItemResult>,
+)
+
 /**
  * The media types Instagram's Graph API reports, and therefore the only values the `mediaType`
  * filter accepts. Validated up front so a typo narrows nothing silently - an unrecognised value
  * would otherwise simply match no rows and look like an empty catalog.
  */
 private val VALID_MEDIA_TYPES = setOf("IMAGE", "VIDEO", "CAROUSEL_ALBUM")
+
+/**
+ * Upper bound on one purge request. Bulk mutations get a cap for the same reason list endpoints do
+ * (see [MAX_PAGE_SIZE]) - an unbounded batch is an unbounded statement - and a destructive one
+ * deserves it more, since a runaway client should not be able to clear an account in one call.
+ */
+internal const val MAX_PURGE_BATCH = 100
+
+/**
+ * Builds the per-item results for a purge request, in the order the client asked for them so the
+ * two lists can be zipped positionally. Anything the repository did not report back had no catalog
+ * row for this account. Pure/no I/O so it's unit-testable on its own.
+ */
+internal fun purgeResults(
+    requested: List<String>,
+    result: PurgeRequestResult,
+): List<MediaPurgeItemResult> =
+    requested.distinct().map { shortcode ->
+        val status =
+            when (shortcode) {
+                in result.accepted -> "ACCEPTED"
+                in result.notInGallery -> "NOT_IN_GALLERY"
+                else -> "NOT_FOUND"
+            }
+        MediaPurgeItemResult(shortcode = shortcode, status = status)
+    }
 
 /**
  * http4k's OpenAPI schema generator infers a JSON schema by reflecting on the runtime class of
@@ -88,6 +164,8 @@ private val EXAMPLE_CATALOG_ITEM =
         selected = false,
         notDigestibleReason = "copyright",
         thumbnailUrl = "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
+        deselectedAt = "2024-01-02T00:00:00Z",
+        purgeRequestedAt = "2024-01-03T00:00:00Z",
     )
 
 internal fun CatalogEntry.toResponse(presigner: Presigner): AdminCatalogItemResponse =
@@ -100,13 +178,20 @@ internal fun CatalogEntry.toResponse(presigner: Presigner): AdminCatalogItemResp
         selected = selected,
         notDigestibleReason = notDigestibleReason,
         thumbnailUrl = thumbnailPath?.let { presigner.presignGet(it).url },
+        deselectedAt = deselectedAt?.toString(),
+        purgeRequestedAt = purgeRequestedAt?.toString(),
     )
 
 /**
  * Admin-only surface for browsing one account's full Instagram media catalog and curating which
  * items get downloaded/stored as gallery posts. Unlike the rest of presentation-service, this is a
  * narrow, deliberate exception to "zero database writes": `PATCH .../selections` flips
- * `instagram_media_catalog.selected`, which `ingestion-service` reads on its next cycle.
+ * `instagram_media_catalog.selected` and `DELETE .../catalog/media` arms an immediate purge on the
+ * same table, both of which `ingestion-service` acts on during its next cycle.
+ *
+ * Neither makes an S3 call. Deletion of media stays entirely `ingestion-service`'s job - these
+ * routes only record intent in the database, which is what keeps the bucket credentials' destructive
+ * surface out of the internet-facing service.
  *
  * Authorization here is per-account, not the single global [knurl.presentation.auth.BearerAuth]
  * used by gallery tracking - a single presentation-service deployment can serve many accounts, so
@@ -131,6 +216,8 @@ class AdminCatalogRoutes(
     private val errorResponseLens = autoBody<ErrorResponse>().toLens()
     private val selectionUpdateRequestLens = autoBody<SelectionUpdateRequest>().toLens()
     private val selectionUpdateResponseLens = autoBody<SelectionUpdateResponse>().toLens()
+    private val mediaPurgeRequestLens = autoBody<MediaPurgeRequest>().toLens()
+    private val mediaPurgeResponseLens = autoBody<MediaPurgeResponse>().toLens()
 
     /**
      * `404` for an unknown account is safe to reveal (account ids are public, non-secret), and
@@ -274,5 +361,73 @@ class AdminCatalogRoutes(
             }
         }
 
-    fun routes(): List<ContractRoute> = listOf(listCatalog(), updateSelections())
+    /**
+     * Outright delete: skips the retention grace period for the named items.
+     *
+     * Pathed under `catalog`, not `gallery`, because what it deletes is an item's *downloaded
+     * media* - the catalog entry and its browse thumbnail survive, so the item stays listed here and
+     * can be selected again later. (Deleting the catalog row would achieve nothing anyway: it is an
+     * unconditional mirror of the Instagram feed, so the next sync re-inserts it.)
+     *
+     * Like `PATCH .../selections`, this writes only `instagram_media_catalog` columns and issues no
+     * S3 call - `ingestion-service` still owns every deletion. The item leaves the gallery
+     * immediately because gallery visibility derives from `selected`; the bytes go on the next
+     * ingestion cycle. Hence `202`, and hence `acceptedCount` rather than `deletedCount`.
+     *
+     * The request body travels on a DELETE, which is legal and which http4k handles. A client or
+     * proxy that strips DELETE bodies would need this re-exposed as a POST.
+     */
+    private fun purgeMedia(): ContractRoute =
+        "/api/v1/admin/accounts" / accountIdPath / "catalog" / "media" meta {
+            summary = "Delete the downloaded media of catalog entries outright, skipping the retention grace period"
+            security = adminBearerSecurity
+            receiving(mediaPurgeRequestLens to MediaPurgeRequest(shortcodes = listOf("Cabc123XYZ", "Cdef456UVW")))
+            returning(
+                Status.ACCEPTED,
+                mediaPurgeResponseLens to
+                    MediaPurgeResponse(
+                        requestedCount = 2,
+                        acceptedCount = 1,
+                        results =
+                            listOf(
+                                MediaPurgeItemResult("Cabc123XYZ", "ACCEPTED"),
+                                MediaPurgeItemResult("Cdef456UVW", "NOT_IN_GALLERY"),
+                            ),
+                    ),
+            )
+        } bindContract Method.DELETE to { accountId, _, _ ->
+            { request ->
+                authorize(accountId, request) {
+                    val requested = mediaPurgeRequestLens(request).shortcodes
+                    when {
+                        requested.isEmpty() -> {
+                            Response(Status.BAD_REQUEST)
+                                .with(errorResponseLens of ErrorResponse("shortcodes must not be empty"))
+                        }
+
+                        requested.size > MAX_PURGE_BATCH -> {
+                            Response(Status.BAD_REQUEST).with(
+                                errorResponseLens of
+                                    ErrorResponse("at most $MAX_PURGE_BATCH shortcodes per request, got ${requested.size}"),
+                            )
+                        }
+
+                        else -> {
+                            val result = catalogRepository.requestPurge(accountId, requested.toSet())
+                            val results = purgeResults(requested, result)
+                            Response(Status.ACCEPTED).with(
+                                mediaPurgeResponseLens of
+                                    MediaPurgeResponse(
+                                        requestedCount = results.size,
+                                        acceptedCount = result.accepted.size,
+                                        results = results,
+                                    ),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+    fun routes(): List<ContractRoute> = listOf(listCatalog(), updateSelections(), purgeMedia())
 }

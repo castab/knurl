@@ -271,6 +271,29 @@ main {
   gap: 0.4rem;
 }
 
+/* Deliberately understated: a destructive action should be findable but not invite a stray click,
+   which is also why it is confirmed before it fires. */
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 0.4rem;
+  font: inherit;
+  font-size: 0.8rem;
+  text-decoration: underline;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.link-button.danger {
+  color: var(--danger-fg);
+}
+
+.link-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .pagination {
   display: flex;
   align-items: center;

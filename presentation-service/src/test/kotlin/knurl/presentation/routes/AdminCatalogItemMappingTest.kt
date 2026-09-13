@@ -3,6 +3,7 @@ package knurl.presentation.routes
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
+import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import knurl.domain.config.S3Settings
 import knurl.domain.models.CatalogEntry
@@ -23,7 +24,11 @@ private fun testPresigner(ttl: Duration = Duration.ofHours(6)): Presigner =
         ttl,
     )
 
-private fun testCatalogEntry(thumbnailPath: String?): CatalogEntry =
+private fun testCatalogEntry(
+    thumbnailPath: String?,
+    deselectedAt: Instant? = null,
+    purgeRequestedAt: Instant? = null,
+): CatalogEntry =
     CatalogEntry(
         instagramMediaId = "media-1",
         instagramAccountId = "account-1",
@@ -35,6 +40,8 @@ private fun testCatalogEntry(thumbnailPath: String?): CatalogEntry =
         selected = false,
         notDigestibleReason = null,
         thumbnailPath = thumbnailPath,
+        deselectedAt = deselectedAt,
+        purgeRequestedAt = purgeRequestedAt,
         updatedAt = Instant.parse("2024-01-01T00:00:00Z"),
     )
 
@@ -55,5 +62,27 @@ class AdminCatalogItemMappingTest :
             val response = entry.toResponse(testPresigner())
 
             response.thumbnailUrl.shouldBeNull()
+        }
+
+        test("exposes the deletion clock so a curator can see the decision is still reversible") {
+            val entry =
+                testCatalogEntry(
+                    thumbnailPath = null,
+                    deselectedAt = Instant.parse("2024-02-01T00:00:00Z"),
+                )
+
+            val response = entry.toResponse(testPresigner())
+
+            response.deselectedAt shouldBe "2024-02-01T00:00:00Z"
+            response.purgeRequestedAt.shouldBeNull()
+        }
+
+        test("a selected entry carries no deletion clock at all") {
+            val entry = testCatalogEntry(thumbnailPath = null)
+
+            val response = entry.toResponse(testPresigner())
+
+            response.deselectedAt.shouldBeNull()
+            response.purgeRequestedAt.shouldBeNull()
         }
     })
