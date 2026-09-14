@@ -12,6 +12,8 @@ import knurl.domain.repositories.InstagramPostRepository
 import knurl.domain.repositories.ObjectKeyRepository
 import knurl.domain.repositories.SyncConfigurationRepository
 import knurl.ingestion.client.MetaGraphClient
+import knurl.ingestion.credentials.createInstagramAccessTokenProvider
+import knurl.ingestion.credentials.validateInstagramCredentialSettings
 import knurl.ingestion.pipeline.OrphanSweeper
 import knurl.ingestion.pipeline.SyncPipeline
 import knurl.ingestion.processor.MediaProcessor
@@ -61,6 +63,8 @@ fun main() =
                 .build()
                 .loadConfigOrThrow<IngestionConfig>()
 
+        validateInstagramCredentialSettings(config.instagram)
+
         val dataSource = DatabaseConfig.createDataSource(config.database)
         DatabaseConfig.runMigrations(dataSource)
         val jdbi = DatabaseConfig.createJdbi(dataSource)
@@ -87,10 +91,17 @@ fun main() =
         val s3Client = buildS3Client(config.s3)
 
         val metaGraphClient = MetaGraphClient(okHttpClient, config.instagram.apiVersion)
+        val accessTokenProvider =
+            createInstagramAccessTokenProvider(
+                settings = config.instagram,
+                authConfigStore = authConfigRepository,
+                refreshToken = metaGraphClient::refreshLongLivedToken,
+                okHttpClient = okHttpClient,
+            )
         val mediaProcessor = MediaProcessor(okHttpClient, s3Client, config.s3.bucketName)
         val syncPipeline =
             SyncPipeline(
-                authConfigRepository = authConfigRepository,
+                accessTokenProvider = accessTokenProvider,
                 postRepository = postRepository,
                 catalogRepository = catalogRepository,
                 galleryRepository = galleryRepository,
@@ -100,7 +111,6 @@ fun main() =
                 s3Client = s3Client,
                 bucketName = config.s3.bucketName,
                 targetUserId = config.instagram.businessAccountId,
-                initialAccessToken = config.instagram.accessToken,
             )
         val orphanSweeper =
             OrphanSweeper(

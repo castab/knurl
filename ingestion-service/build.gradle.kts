@@ -26,4 +26,6 @@ dependencies {
     implementation("com.sksamuel.hoplite:hoplite-hocon:2.9.0")
 
     implementation("org.slf4j:slf4j-simple:2.0.16")
+
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

@@ -1,11 +1,9 @@
 package knurl.ingestion.pipeline
 
-import knurl.domain.models.AuthConfig
 import knurl.domain.models.CatalogUpsert
 import knurl.domain.models.EvictionCandidate
 import knurl.domain.models.InstagramPostUpsert
 import knurl.domain.models.PostMediaItemUpsert
-import knurl.domain.repositories.AuthConfigRepository
 import knurl.domain.repositories.CatalogRepository
 import knurl.domain.repositories.GalleryRepository
 import knurl.domain.repositories.InstagramPostRepository
@@ -13,6 +11,7 @@ import knurl.domain.repositories.SyncConfigurationRepository
 import knurl.ingestion.client.MediaChild
 import knurl.ingestion.client.MediaItem
 import knurl.ingestion.client.MetaGraphClient
+import knurl.ingestion.credentials.InstagramAccessTokenProvider
 import knurl.ingestion.processor.MediaProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -159,7 +158,6 @@ fun shouldSkipVanishedRemoval(
     return vanishedCount * 100L > existingCatalogCount.toLong() * maxPercent
 }
 
-private const val TOKEN_REFRESH_THRESHOLD_HOURS = 24L
 private const val DEFAULT_RETENTION_DAYS = 30
 private const val EVICTION_CONCURRENCY = 2
 private const val THUMBNAIL_FETCH_CONCURRENCY = 4
@@ -188,8 +186,8 @@ fun thumbnailSourceUrl(item: MediaItem): String? {
 }
 
 /**
- * Orchestrates one ingestion cycle: refresh the Graph API token if it's close to expiring, sync the
- * account's entire media feed into the catalog (metadata only) while additionally downloading and
+ * Orchestrates one ingestion cycle: obtain a valid Graph API token from the configured credential
+ * provider, sync the account's entire media feed into the catalog (metadata only) while additionally downloading and
  * storing any catalog item that belongs to a gallery and is not yet in `instagram_posts`, remove
  * any catalog entry (and downloaded post) for media Instagram's feed no longer returned this cycle,
  * then run the retention sweep that deletes the media of items deselected longer ago than
@@ -206,7 +204,7 @@ fun thumbnailSourceUrl(item: MediaItem): String? {
  * once the source of truth no longer serves the media at all.
  */
 class SyncPipeline(
-    private val authConfigRepository: AuthConfigRepository,
+    private val accessTokenProvider: InstagramAccessTokenProvider,
     private val postRepository: InstagramPostRepository,
     private val catalogRepository: CatalogRepository,
     private val galleryRepository: GalleryRepository,
@@ -216,36 +214,14 @@ class SyncPipeline(
     private val s3Client: S3Client,
     private val bucketName: String,
     private val targetUserId: String,
-    private val initialAccessToken: String,
 ) {
     private val log = LoggerFactory.getLogger(SyncPipeline::class.java)
 
     suspend fun runOnce() {
-        val accessToken = ensureFreshToken()
+        val accessToken = accessTokenProvider.getAccessToken()
         val presentMediaIds = syncCatalogAndSelectedMedia(accessToken)
         removeVanishedMedia(presentMediaIds)
         runEviction()
-    }
-
-    private fun ensureFreshToken(): String {
-        val stored = authConfigRepository.get(targetUserId)
-        val nearExpiry =
-            stored == null ||
-                Instant.now().plusSeconds(TOKEN_REFRESH_THRESHOLD_HOURS * 3600).isAfter(stored.expiresAt)
-
-        if (!nearExpiry) return stored.accessToken
-
-        val tokenToRefresh = stored?.accessToken ?: initialAccessToken
-        val refreshed = metaGraphClient.refreshLongLivedToken(tokenToRefresh)
-        authConfigRepository.upsert(
-            AuthConfig(
-                instagramAccountId = targetUserId,
-                accessToken = refreshed.accessToken,
-                expiresAt = refreshed.expiresAt,
-                updatedAt = Instant.now(),
-            ),
-        )
-        return refreshed.accessToken
     }
 
     /**

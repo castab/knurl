@@ -53,10 +53,17 @@ class AccountRepository(
         }
 }
 
+/** Persistence boundary for standalone ingestion's refreshable Instagram access token. */
+interface AuthConfigStore {
+    fun get(accountId: String): AuthConfig?
+
+    fun upsert(config: AuthConfig)
+}
+
 class AuthConfigRepository(
     private val jdbi: Jdbi,
-) {
-    fun get(accountId: String): AuthConfig? =
+) : AuthConfigStore {
+    override fun get(accountId: String): AuthConfig? =
         jdbi.withHandle<AuthConfig?, Exception> { handle ->
             handle
                 .createQuery("SELECT * FROM auth_config WHERE instagram_account_id = :accountId")
@@ -66,7 +73,7 @@ class AuthConfigRepository(
                 .orElse(null)
         }
 
-    fun upsert(config: AuthConfig) {
+    override fun upsert(config: AuthConfig) {
         jdbi.useHandle<Exception> { handle ->
             handle
                 .createUpdate(

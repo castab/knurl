@@ -59,6 +59,12 @@ Runtime knobs all live in `sync_configurations` rather than Hoplite config, so t
 
 ## Configuration
 
+### Instagram credential delivery
+
+`SyncPipeline` obtains its Graph API token only through `InstagramAccessTokenProvider`; keep token storage, refresh, and delivery logic behind that boundary. The default `DATABASE` provider preserves standalone Knurl's existing behavior: `INSTAGRAM_ACCESS_TOKEN` seeds the first refresh and `auth_config` stores refreshed tokens in plaintext in the operator-owned database. With the optional `HTTP_BROKER` provider, the authenticated broker owns refresh and persistence, and ingestion must neither consult nor update `auth_config`. Never add a broker-to-database fallback, since that would bypass broker-side revocation.
+
+The broker request deliberately contains no account id. Its bearer credential is scoped to one account, and ingestion verifies the returned `instagramAccountId` against its configured account. HTTPS is the default; plaintext HTTP requires an explicit opt-in for trusted private service networks and never removes bearer authentication. Keep broker-specific HTTP code in `ingestion-service` — `shared-domain` remains free of HTTP/JSON-framework dependencies.
+
 Both services load a typed config object from layered HOCON `.conf` resources via Hoplite — see `PresentationConfig`/`IngestionConfig`. **Don't reintroduce scattered `System.getenv(...)` calls** — add a field to the relevant config data class and reference it in a `.conf` file instead.
 
 Hoplite's `addPropertySource` order is priority order: **the first source added wins** when a key is present in more than one, merged per key (not per file). Each `Main.kt` adds sources highest-priority-first:
