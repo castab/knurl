@@ -148,6 +148,29 @@ main {
   min-width: 14rem;
 }
 
+.gallery-id {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.gallery-id-label {
+  width: 100%;
+}
+
+.gallery-id code {
+  color: canvastext;
+  user-select: all;
+}
+
+.gallery-id button {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+}
+
 .filter-group {
   display: flex;
   flex-wrap: wrap;
