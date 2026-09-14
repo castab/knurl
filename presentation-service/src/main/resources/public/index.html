@@ -68,6 +68,11 @@
           Curating
           <select id="adminGallerySelect"></select>
         </label>
+        <div class="gallery-id" aria-live="polite">
+          <span class="gallery-id-label">Gallery UUID</span>
+          <code id="adminGalleryIdValue">No gallery selected</code>
+          <button type="button" id="galleryCopyId" class="secondary" disabled>Copy UUID</button>
+        </div>
         <input type="text" id="galleryNewName" placeholder="New gallery name" maxlength="100" />
         <button type="button" id="galleryCreate">Create</button>
         <button type="button" id="galleryRename" class="secondary" disabled>Rename</button>

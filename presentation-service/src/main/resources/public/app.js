@@ -22,6 +22,8 @@
     galleryPageLabel: document.getElementById("galleryPageLabel"),
 
     adminGallerySelect: document.getElementById("adminGallerySelect"),
+    adminGalleryIdValue: document.getElementById("adminGalleryIdValue"),
+    galleryCopyId: document.getElementById("galleryCopyId"),
     galleryNewName: document.getElementById("galleryNewName"),
     galleryCreate: document.getElementById("galleryCreate"),
     galleryRename: document.getElementById("galleryRename"),
@@ -711,9 +713,23 @@
   }
 
   function updateGalleryManagerButtons() {
-    const hasSelection = Boolean(adminGalleryId());
+    const gallery = currentGallery();
+    const hasSelection = gallery !== null;
     els.galleryRename.disabled = !hasSelection;
     els.galleryDelete.disabled = !hasSelection;
+    els.galleryCopyId.disabled = !hasSelection;
+    els.adminGalleryIdValue.textContent = gallery?.id ?? "No gallery selected";
+  }
+
+  async function copyCurrentGalleryId() {
+    const gallery = currentGallery();
+    if (!gallery) return;
+    try {
+      await navigator.clipboard.writeText(gallery.id);
+      els.galleryManagerStatus.textContent = "Copied gallery UUID";
+    } catch {
+      showError(els.galleryManagerError, "Couldn't copy the UUID automatically; select the value and copy it.");
+    }
   }
 
   async function loadGalleries() {
@@ -756,6 +772,7 @@
     updateGalleryManagerButtons();
     resetCurationState();
   });
+  els.galleryCopyId.addEventListener("click", copyCurrentGalleryId);
 
   els.galleryCreate.addEventListener("click", async () => {
     showError(els.galleryManagerError, "");
