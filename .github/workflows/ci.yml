@@ -42,4 +42,6 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build, lint, and test
-        run: ./gradlew build --no-daemon
+        # `sh gradlew`, not `./gradlew`: the wrapper is committed without the executable bit (this
+        # repo is edited on Windows - see both Dockerfiles' identical note and workaround).
+        run: sh gradlew build --no-daemon
