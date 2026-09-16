@@ -11,6 +11,7 @@ import knurl.domain.repositories.GalleryRepository
 import knurl.domain.repositories.InstagramPostRepository
 import knurl.domain.repositories.ObjectKeyRepository
 import knurl.domain.repositories.SyncConfigurationRepository
+import knurl.domain.security.CredentialCipher
 import knurl.ingestion.client.MetaGraphClient
 import knurl.ingestion.credentials.createInstagramAccessTokenProvider
 import knurl.ingestion.credentials.validateInstagramCredentialSettings
@@ -70,7 +71,7 @@ fun main() =
         val jdbi = DatabaseConfig.createJdbi(dataSource)
 
         val accountRepository = AccountRepository(jdbi)
-        val authConfigRepository = AuthConfigRepository(jdbi)
+        val authConfigRepository = AuthConfigRepository(jdbi, CredentialCipher(config.credentialEncryptionKey))
         val postRepository = InstagramPostRepository(jdbi)
         val catalogRepository = CatalogRepository(jdbi)
         val galleryRepository = GalleryRepository(jdbi)

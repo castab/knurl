@@ -9,6 +9,8 @@ import knurl.domain.models.InstagramPostUpsert
 import knurl.domain.models.Page
 import knurl.domain.models.PostMediaItem
 import knurl.domain.models.PurgeRequestResult
+import knurl.domain.security.CredentialCipher
+import knurl.domain.security.TokenHasher
 import org.jdbi.v3.core.Jdbi
 import org.jdbi.v3.core.kotlin.bindKotlin
 import org.jdbi.v3.core.kotlin.mapTo
@@ -16,10 +18,26 @@ import org.jdbi.v3.core.statement.Query
 import java.time.Instant
 import kotlin.uuid.Uuid
 
+/** The outcome of checking a candidate bearer token against one account's stored admin token. */
+sealed interface AdminTokenVerification {
+    /** No account is registered under this id - safe to reveal, since account ids are public. */
+    data object UnknownAccount : AdminTokenVerification
+
+    /** The account exists and the candidate token's hash matches its stored hash. */
+    data object Match : AdminTokenVerification
+
+    /** The account exists but the candidate token (or its absence) does not match. */
+    data object Mismatch : AdminTokenVerification
+}
+
 /**
  * Registry of known Instagram accounts and their admin-API tokens. A row is (re)written by
  * whichever `ingestion-service` instance owns that account on every startup - `register` always
- * overwrites `admin_token` from current config, which is also how an operator rotates it.
+ * overwrites `admin_token_hash` from current config, which is also how an operator rotates it.
+ *
+ * Only a [TokenHasher.sha256] digest of the token is ever persisted - see the schema comment and
+ * [TokenHasher]'s doc comment for why a one-way hash is enough here (unlike the Instagram access
+ * token, which [AuthConfigRepository] must recover in full and therefore encrypts instead).
  */
 class AccountRepository(
     private val jdbi: Jdbi,
@@ -32,25 +50,41 @@ class AccountRepository(
             handle
                 .createUpdate(
                     """
-                    INSERT INTO instagram_accounts (instagram_account_id, admin_token)
-                    VALUES (:accountId, :adminToken)
-                    ON CONFLICT (instagram_account_id) DO UPDATE SET admin_token = EXCLUDED.admin_token
+                    INSERT INTO instagram_accounts (instagram_account_id, admin_token_hash)
+                    VALUES (:accountId, :adminTokenHash)
+                    ON CONFLICT (instagram_account_id) DO UPDATE SET admin_token_hash = EXCLUDED.admin_token_hash
                     """.trimIndent(),
                 ).bind("accountId", accountId)
-                .bind("adminToken", adminToken)
+                .bind("adminTokenHash", TokenHasher.sha256(adminToken))
                 .execute()
         }
     }
 
-    fun findAdminToken(accountId: String): String? =
-        jdbi.withHandle<String?, Exception> { handle ->
-            handle
-                .createQuery("SELECT admin_token FROM instagram_accounts WHERE instagram_account_id = :accountId")
-                .bind("accountId", accountId)
-                .mapTo<String>()
-                .findFirst()
-                .orElse(null)
+    /**
+     * Hashes [candidateToken] and compares it against [accountId]'s stored hash. The plaintext
+     * admin token never round-trips out of the database - only [AdminTokenVerification] does.
+     */
+    fun verifyAdminToken(
+        accountId: String,
+        candidateToken: String?,
+    ): AdminTokenVerification {
+        val storedHash =
+            jdbi.withHandle<String?, Exception> { handle ->
+                handle
+                    .createQuery("SELECT admin_token_hash FROM instagram_accounts WHERE instagram_account_id = :accountId")
+                    .bind("accountId", accountId)
+                    .mapTo<String>()
+                    .findFirst()
+                    .orElse(null)
+            } ?: return AdminTokenVerification.UnknownAccount
+
+        if (candidateToken == null) return AdminTokenVerification.Mismatch
+        return if (TokenHasher.matches(TokenHasher.sha256(candidateToken), storedHash)) {
+            AdminTokenVerification.Match
+        } else {
+            AdminTokenVerification.Mismatch
         }
+    }
 }
 
 /** Persistence boundary for standalone ingestion's refreshable Instagram access token. */
@@ -60,32 +94,45 @@ interface AuthConfigStore {
     fun upsert(config: AuthConfig)
 }
 
+/**
+ * [AuthConfig.accessToken] is encrypted with [cipher] going into `access_token_encrypted` and
+ * decrypted coming back out, transparently to every caller - [AuthConfig] itself always carries
+ * the plaintext token in memory. See [CredentialCipher]'s doc
+ * comment for why this token is encrypted rather than hashed like the admin token.
+ */
 class AuthConfigRepository(
     private val jdbi: Jdbi,
+    private val cipher: CredentialCipher,
 ) : AuthConfigStore {
     override fun get(accountId: String): AuthConfig? =
         jdbi.withHandle<AuthConfig?, Exception> { handle ->
             handle
-                .createQuery("SELECT * FROM auth_config WHERE instagram_account_id = :accountId")
-                .bind("accountId", accountId)
+                .createQuery(
+                    """
+                    SELECT instagram_account_id, access_token_encrypted AS access_token, expires_at, updated_at
+                    FROM auth_config WHERE instagram_account_id = :accountId
+                    """.trimIndent(),
+                ).bind("accountId", accountId)
                 .mapTo<AuthConfig>()
                 .findFirst()
                 .orElse(null)
+                ?.let { it.copy(accessToken = cipher.decrypt(it.accessToken)) }
         }
 
     override fun upsert(config: AuthConfig) {
+        val toStore = config.copy(accessToken = cipher.encrypt(config.accessToken))
         jdbi.useHandle<Exception> { handle ->
             handle
                 .createUpdate(
                     """
-                    INSERT INTO auth_config (instagram_account_id, access_token, expires_at, updated_at)
+                    INSERT INTO auth_config (instagram_account_id, access_token_encrypted, expires_at, updated_at)
                     VALUES (:instagramAccountId, :accessToken, :expiresAt, :updatedAt)
                     ON CONFLICT (instagram_account_id) DO UPDATE SET
-                        access_token = EXCLUDED.access_token,
+                        access_token_encrypted = EXCLUDED.access_token_encrypted,
                         expires_at = EXCLUDED.expires_at,
                         updated_at = EXCLUDED.updated_at
                     """.trimIndent(),
-                ).bindKotlin(config)
+                ).bindKotlin(toStore)
                 .execute()
         }
     }
