@@ -15,7 +15,7 @@ dependencies {
     implementation("com.sksamuel.scrimage:scrimage-core:4.1.3")
     implementation("com.sksamuel.scrimage:scrimage-webp:4.1.3")
 
-    implementation(platform("software.amazon.awssdk:bom:2.54.14"))
+    implementation(platform("software.amazon.awssdk:bom:2.54.17"))
     implementation("software.amazon.awssdk:s3")
     implementation("software.amazon.awssdk:url-connection-client")
 

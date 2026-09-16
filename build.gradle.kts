@@ -21,7 +21,7 @@ subprojects {
     }
 
     dependencies {
-        "testImplementation"(platform("io.kotest:kotest-bom:6.2.4"))
+        "testImplementation"(platform("io.kotest:kotest-bom:6.2.5"))
         "testImplementation"("io.kotest:kotest-runner-junit5")
         "testImplementation"("io.kotest:kotest-assertions-core")
     }
