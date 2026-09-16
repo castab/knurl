@@ -8,7 +8,7 @@ dependencies {
     api("org.jdbi:jdbi3-postgres")
     api("org.jdbi:jdbi3-kotlin")
 
-    api("com.zaxxer:HikariCP:5.1.0")
+    api("com.zaxxer:HikariCP:7.1.0")
 
     implementation("org.flywaydb:flyway-core:12.9.0")
     implementation("org.flywaydb:flyway-database-postgresql:12.9.0")
