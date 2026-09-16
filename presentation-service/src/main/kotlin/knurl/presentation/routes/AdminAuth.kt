@@ -1,6 +1,7 @@
 package knurl.presentation.routes
 
 import knurl.domain.repositories.AccountRepository
+import knurl.domain.repositories.AdminTokenVerification
 import knurl.presentation.auth.BearerToken
 import org.http4k.core.Filter
 import org.http4k.core.Request
@@ -37,14 +38,17 @@ internal fun authorizeAccount(
     accountId: String,
     request: Request,
     onAuthorized: () -> Response,
-): Response {
-    val expectedToken =
-        accountRepository.findAdminToken(accountId)
-            ?: return Response(Status.NOT_FOUND).with(errorResponseLens of ErrorResponse("unknown account"))
+): Response =
+    when (accountRepository.verifyAdminToken(accountId, BearerToken.extract(request))) {
+        AdminTokenVerification.UnknownAccount -> {
+            Response(Status.NOT_FOUND).with(errorResponseLens of ErrorResponse("unknown account"))
+        }
 
-    return if (BearerToken.matches(BearerToken.extract(request), expectedToken)) {
-        onAuthorized()
-    } else {
-        Response(Status.UNAUTHORIZED).with(errorResponseLens of ErrorResponse("unauthorized"))
+        AdminTokenVerification.Match -> {
+            onAuthorized()
+        }
+
+        AdminTokenVerification.Mismatch -> {
+            Response(Status.UNAUTHORIZED).with(errorResponseLens of ErrorResponse("unauthorized"))
+        }
     }
-}

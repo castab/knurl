@@ -1,0 +1,38 @@
+# Gitleaks config for the CI secret scan (.github/workflows/security.yml).
+#
+# Extends the default gitleaks ruleset unchanged - this file only allowlists the fixed,
+# intentionally-fake local-dev credentials that are checked in on purpose (see README.md's
+# "Local development with Docker Compose" section and each file's own comments explaining they
+# are not meant to be secret). Nothing else is exempted: a real credential anywhere in the repo
+# or its history should still fail this scan.
+
+title = "knurl gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+# Deliberately regex-only, not path-scoped: a `paths` entry would exempt an entire file from
+# every rule (gitleaks ORs `regexes`/`paths` within one allowlist block, it doesn't AND them),
+# which would blind the scan to a real secret later added anywhere in that file. Each regex below
+# instead matches only the exact known-fake literal value, wherever it appears.
+description = "Fixed, checked-in, non-secret local-dev credentials and README documentation placeholders"
+regexes = [
+  '''knurl-dev-secret''',             # docker-compose.yml MinIO root password / application-local.conf S3 secret key
+  '''dev-token''',                    # presentation-service/src/main/resources/application-local.conf apiBearerToken
+  '''your-long-lived-access-token''', # README.md's application-instagram.conf example block
+  '''pick-your-own-admin-secret''',   # README.md's application-instagram.conf example block
+]
+
+# Verified gap: gitleaks' bundled `generic-api-key` rule caps the secret length short enough
+# that a real ~190-character Meta/Instagram long-lived access token (the exact shape of the
+# credential this audit found sitting in ingestion-service/config/application-instagram.conf)
+# silently does not match it - confirmed locally by testing the real value against the default
+# ruleset. This rule targets this repo's specific credential fields with no upper length bound
+# short of a sanity ceiling, so a long-lived token doesn't slip past the length cap that misses it.
+[[rules]]
+id = "knurl-long-lived-credential"
+description = "accessToken/adminToken/bearerToken-style credential in a HOCON .conf file, including tokens too long for gitleaks' default generic-api-key rule to catch"
+regex = '''(?i)(access[_-]?token|admin[_-]?token|bearer[_-]?token)\s*=\s*"([a-zA-Z0-9+/_=\-]{16,})"'''
+secretGroup = 2
+keywords = ["accesstoken", "admintoken", "bearertoken"]

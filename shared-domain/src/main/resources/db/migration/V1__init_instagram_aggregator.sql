@@ -2,19 +2,28 @@
 
 -- 0. Multi-tenant Account Registry
 -- `instagram_account_id` is the Graph API business account id - public, non-secret information,
--- safe to use as a URL path segment. `admin_token` gates admin access (catalog browse/selection)
--- to this account's own content; it's set/rotated by whichever `ingestion-service` instance owns
--- this account, not by `presentation-service`.
+-- safe to use as a URL path segment. `admin_token_hash` gates admin access (catalog
+-- browse/selection) to this account's own content; it's set/rotated by whichever
+-- `ingestion-service` instance owns this account, not by `presentation-service`.
+--
+-- Only a TokenHasher.sha256 digest of the token is ever stored here, never the plaintext - a
+-- database read alone (backup, replica, log, compromised ops account) must not yield a working
+-- admin credential. AccountRepository.verifyAdminToken re-hashes the candidate and compares
+-- digests; the plaintext never needs to round-trip back out, so a one-way hash is enough.
 CREATE TABLE instagram_accounts (
     instagram_account_id VARCHAR(100) PRIMARY KEY,
-    admin_token TEXT NOT NULL,
+    admin_token_hash TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 1. System Credential Ledger (one row per account)
+-- `access_token_encrypted` holds the Instagram access token AES-256-GCM-encrypted by
+-- CredentialCipher (keyed by CREDENTIAL_ENCRYPTION_KEY, configured independently of the
+-- database), not hashed like admin_token_hash above - ingestion-service must recover it in full
+-- to replay it to Meta's Graph API on every sync cycle, which a one-way hash can't support.
 CREATE TABLE auth_config (
     instagram_account_id VARCHAR(100) PRIMARY KEY REFERENCES instagram_accounts (instagram_account_id),
-    access_token TEXT NOT NULL,
+    access_token_encrypted TEXT NOT NULL,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

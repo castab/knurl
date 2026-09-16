@@ -1,0 +1,63 @@
+name: Security
+
+# Two independent checks, neither of which existed before this workflow:
+#
+# 1. secret-scan: runs Gitleaks' open-source CLI (not the hosted Action, which requires a license
+#    on private repos) directly against the full commit history on every push/PR, so a credential
+#    committed by mistake fails CI instead of shipping silently - see the audit finding that a live
+#    Instagram token/admin secret was found sitting unencrypted in the working tree.
+#
+# 2. dependency-submission: resolves this repo's actual Gradle dependency graph (not just what
+#    build.gradle.kts declares - the transitive versions that matter for CVEs) and submits it to
+#    GitHub's Dependency Graph API. That's what powers Dependabot security alerts for a Gradle
+#    project with no lockfile. Requires "Dependency graph" and "Dependabot alerts" enabled under
+#    the repo's Settings > Security - this workflow feeds that pipeline, it doesn't turn it on.
+
+# `push` is scoped to `main` only for the same reason as ci.yml: it keeps `push` and
+# `pull_request` from firing for the same commit (a PR branch push triggers `pull_request`
+# only; merging into `main` triggers `push` only).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history, not just the merge commit - a secret could be in an older commit
+
+      - name: Install Gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
+            | tar -xz -C /usr/local/bin gitleaks
+
+      - name: Scan for committed secrets
+        run: gitleaks detect --source . --redact --verbose --config .gitleaks.toml
+
+  dependency-submission:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to submit the dependency graph
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Submit Gradle dependency graph
+        uses: gradle/actions/dependency-submission@v4

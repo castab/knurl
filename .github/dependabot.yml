@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Gradle has no lockfile for Dependabot to diff against on its own; combined with
+  # .github/workflows/security.yml's dependency-submission job (which feeds GitHub's Dependency
+  # Graph from an actual resolved build), this still gets version-update PRs for direct
+  # dependencies declared in the various build.gradle.kts files.
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Keeps the actions pinned in .github/workflows/*.yml (actions/checkout, actions/setup-java,
+  # gradle/actions/*) current - an out-of-date Action is itself a supply-chain surface.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
