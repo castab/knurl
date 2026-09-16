@@ -31,10 +31,14 @@ private const val MAX_SOURCE_IMAGE_BYTES = 32L * 1024 * 1024
  * here - it streams straight to S3 (or, for a chunked/unknown-length response, to a local temp
  * file - see [processVideoPassthrough]) - so this isn't a heap-OOM guard the way
  * [MAX_SOURCE_IMAGE_BYTES] is. It exists for the temp-file branch specifically: without a cap, a
- * misbehaving or malicious upstream response can fill the container's disk indefinitely. 750MiB
- * comfortably covers real Instagram feed/Reels content while still being a bounded ceiling.
+ * misbehaving or malicious upstream response can fill the container's disk indefinitely. 100MiB
+ * comfortably covers real Instagram feed/Reels content - Instagram serves already-compressed
+ * delivery video from its CDN, not the original upload, so typical content sits well under this -
+ * while staying a bounded ceiling. A legitimately larger video (long-form content at high bitrate)
+ * fails this one item gracefully: `SyncPipeline` logs and retries it next cycle rather than
+ * crashing, so this errs toward the tighter cap rather than a looser one.
  */
-private const val MAX_SOURCE_VIDEO_BYTES = 750L * 1024 * 1024
+private const val MAX_SOURCE_VIDEO_BYTES = 100L * 1024 * 1024
 
 /** Content types this service will store verbatim on a video object; anything else falls back to `video/mp4`. */
 private val ALLOWED_VIDEO_CONTENT_TYPES = setOf("video/mp4", "video/quicktime", "video/webm")
