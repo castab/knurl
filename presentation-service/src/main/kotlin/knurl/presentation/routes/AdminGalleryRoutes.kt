@@ -1,6 +1,5 @@
 package knurl.presentation.routes
 
-import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.GalleryNameTaken
 import knurl.domain.repositories.GalleryRepository
 import kotlinx.serialization.Serializable
@@ -76,7 +75,7 @@ internal const val MAX_GALLERY_ITEMS_BATCH = 100
  */
 class AdminGalleryRoutes(
     private val galleryRepository: GalleryRepository,
-    private val accountRepository: AccountRepository,
+    private val verifyAdminToken: VerifyAccountToken,
 ) {
     private val accountIdPath = Path.of("accountId")
     private val galleryIdPath = Path.of("galleryId")
@@ -123,7 +122,7 @@ class AdminGalleryRoutes(
             returning(Status.CREATED, gallerySummaryLens to exampleGallery)
         } bindContract Method.POST to { accountId, _ ->
             { request ->
-                authorizeAccount(accountRepository, accountId, request) {
+                authorizeAccount(accountId, request, verifyAdminToken) {
                     val name = validatedName(galleryWriteRequestLens(request).name)
                     if (name == null) {
                         badRequest("name must be 1-100 characters after trimming")
@@ -152,7 +151,7 @@ class AdminGalleryRoutes(
             returning(Status.OK, gallerySummaryLens to exampleGallery)
         } bindContract Method.PATCH to { accountId, _, rawGalleryId ->
             { request ->
-                authorizeAccount(accountRepository, accountId, request) {
+                authorizeAccount(accountId, request, verifyAdminToken) {
                     withGalleryId(rawGalleryId) { galleryId ->
                         val name = validatedName(galleryWriteRequestLens(request).name)
                         when {
@@ -206,7 +205,7 @@ class AdminGalleryRoutes(
             )
         } bindContract Method.DELETE to { accountId, _, rawGalleryId ->
             { request ->
-                authorizeAccount(accountRepository, accountId, request) {
+                authorizeAccount(accountId, request, verifyAdminToken) {
                     withGalleryId(rawGalleryId) { galleryId ->
                         val gallery = galleryRepository.find(accountId, galleryId)
                         val forced = forceQuery(request) == "true"
@@ -274,7 +273,7 @@ class AdminGalleryRoutes(
             )
         } bindContract Method.PATCH to { accountId, _, rawGalleryId, _ ->
             { request ->
-                authorizeAccount(accountRepository, accountId, request) {
+                authorizeAccount(accountId, request, verifyAdminToken) {
                     withGalleryId(rawGalleryId) { galleryId ->
                         val body = galleryItemsRequestLens(request)
                         val addSet = body.add.toSet()

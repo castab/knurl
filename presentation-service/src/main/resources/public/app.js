@@ -3,7 +3,7 @@
 
   const els = {
     accountId: document.getElementById("accountId"),
-    apiBearerToken: document.getElementById("apiBearerToken"),
+    readToken: document.getElementById("readToken"),
     adminToken: document.getElementById("adminToken"),
     tabButtons: document.querySelectorAll(".tab-button"),
     tabPanels: document.querySelectorAll(".tab-panel"),
@@ -62,13 +62,13 @@
 
   const CONFIG_KEYS = {
     accountId: "knurl.accountId",
-    apiBearerToken: "knurl.apiBearerToken",
+    readToken: "knurl.readToken",
     adminToken: "knurl.adminToken",
   };
 
   // The account id is not a secret and is persisted across browser sessions for convenience. The two
   // tokens are secrets and go to sessionStorage instead, so they do not survive the tab being closed.
-  const SECRET_FIELDS = new Set(["apiBearerToken", "adminToken"]);
+  const SECRET_FIELDS = new Set(["readToken", "adminToken"]);
 
   for (const [field, key] of Object.entries(CONFIG_KEYS)) {
     const store = SECRET_FIELDS.has(field) ? sessionStorage : localStorage;
@@ -86,8 +86,8 @@
     return els.accountId.value.trim();
   }
 
-  function publicToken() {
-    return els.apiBearerToken.value.trim();
+  function readToken() {
+    return els.readToken.value.trim();
   }
 
   // ---- tabs ---------------------------------------------------------------
@@ -253,7 +253,7 @@
       showError(els.galleryError, "Pick a gallery first. If the list is empty, create one on the Admin tab.");
       return;
     }
-    if (!publicToken()) {
+    if (!readToken()) {
       showError(els.galleryError, "Enter the public bearer token to load galleries.");
       return;
     }
@@ -261,7 +261,7 @@
     els.galleryStatus.textContent = "Loading...";
     els.galleryGrid.innerHTML = "";
     try {
-      const body = await apiFetch(url ?? galleryFirstPageUrl(), { token: publicToken() });
+      const body = await apiFetch(url ?? galleryFirstPageUrl(), { token: readToken() });
       renderGallery(body.data);
       galleryLinks = renderPagination(
         {
@@ -338,7 +338,7 @@
 
   async function trackEvent(id, event, btn) {
     showError(els.galleryError, "");
-    const token = publicToken();
+    const token = readToken();
     if (!token) {
       showError(els.galleryError, "Enter the public bearer token to track events.");
       return;
@@ -734,7 +734,7 @@
 
   async function loadGalleries() {
     if (!accountId()) return;
-    const token = publicToken();
+    const token = readToken();
     if (!token) {
       showError(els.galleryError, "Enter the public bearer token to load galleries.");
       return;

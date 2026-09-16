@@ -18,24 +18,48 @@ import org.jdbi.v3.core.statement.Query
 import java.time.Instant
 import kotlin.uuid.Uuid
 
-/** The outcome of checking a candidate bearer token against one account's stored admin token. */
-sealed interface AdminTokenVerification {
+/** The outcome of checking a candidate bearer token against one account's stored token hash. */
+sealed interface AccountTokenVerification {
     /** No account is registered under this id - safe to reveal, since account ids are public. */
-    data object UnknownAccount : AdminTokenVerification
+    data object UnknownAccount : AccountTokenVerification
 
     /** The account exists and the candidate token's hash matches its stored hash. */
-    data object Match : AdminTokenVerification
+    data object Match : AccountTokenVerification
 
     /** The account exists but the candidate token (or its absence) does not match. */
-    data object Mismatch : AdminTokenVerification
+    data object Mismatch : AccountTokenVerification
 }
 
 /**
- * Registry of known Instagram accounts and their admin-API tokens. A row is (re)written by
- * whichever `ingestion-service` instance owns that account on every startup - `register` always
- * overwrites `admin_token_hash` from current config, which is also how an operator rotates it.
+ * The comparison at the heart of every per-account token check in this repository - whether
+ * admin or read - kept as a pure function, separate from the database lookup that supplies
+ * [storedHash], specifically so it has direct unit test coverage without a database. This
+ * function *is* the mechanism that keeps one account's content from being reachable with another
+ * account's token; the SQL that fetches [storedHash] is a plain parameterized lookup with nothing
+ * account-isolation-relevant to get wrong on its own.
+ */
+internal fun verifyAccountToken(
+    storedHash: String?,
+    candidateToken: String?,
+): AccountTokenVerification {
+    if (storedHash == null) return AccountTokenVerification.UnknownAccount
+    if (candidateToken == null) return AccountTokenVerification.Mismatch
+    return if (TokenHasher.matches(TokenHasher.sha256(candidateToken), storedHash)) {
+        AccountTokenVerification.Match
+    } else {
+        AccountTokenVerification.Mismatch
+    }
+}
+
+/**
+ * Registry of known Instagram accounts and their two bearer tokens: `admin_token_hash` (full
+ * admin access - catalog browse/selection, gallery CRUD) and `read_token_hash` (read-only gallery
+ * access, scoped to this account only - see the schema comment on why this stopped being one
+ * token shared by every account). A row is (re)written by whichever `ingestion-service` instance
+ * owns that account on every startup - `register` always overwrites both hashes from current
+ * config, which is also how an operator rotates either one.
  *
- * Only a [TokenHasher.sha256] digest of the token is ever persisted - see the schema comment and
+ * Only a [TokenHasher.sha256] digest of each token is ever persisted - see the schema comment and
  * [TokenHasher]'s doc comment for why a one-way hash is enough here (unlike the Instagram access
  * token, which [AuthConfigRepository] must recover in full and therefore encrypts instead).
  */
@@ -45,46 +69,57 @@ class AccountRepository(
     fun register(
         accountId: String,
         adminToken: String,
+        readToken: String,
     ) {
         jdbi.useHandle<Exception> { handle ->
             handle
                 .createUpdate(
                     """
-                    INSERT INTO instagram_accounts (instagram_account_id, admin_token_hash)
-                    VALUES (:accountId, :adminTokenHash)
-                    ON CONFLICT (instagram_account_id) DO UPDATE SET admin_token_hash = EXCLUDED.admin_token_hash
+                    INSERT INTO instagram_accounts (instagram_account_id, admin_token_hash, read_token_hash)
+                    VALUES (:accountId, :adminTokenHash, :readTokenHash)
+                    ON CONFLICT (instagram_account_id) DO UPDATE SET
+                        admin_token_hash = EXCLUDED.admin_token_hash,
+                        read_token_hash = EXCLUDED.read_token_hash
                     """.trimIndent(),
                 ).bind("accountId", accountId)
                 .bind("adminTokenHash", TokenHasher.sha256(adminToken))
+                .bind("readTokenHash", TokenHasher.sha256(readToken))
                 .execute()
         }
     }
 
     /**
-     * Hashes [candidateToken] and compares it against [accountId]'s stored hash. The plaintext
-     * admin token never round-trips out of the database - only [AdminTokenVerification] does.
+     * Hashes [candidateToken] and compares it against [accountId]'s stored admin-token hash. The
+     * plaintext token never round-trips out of the database - only [AccountTokenVerification] does.
      */
     fun verifyAdminToken(
         accountId: String,
         candidateToken: String?,
-    ): AdminTokenVerification {
-        val storedHash =
-            jdbi.withHandle<String?, Exception> { handle ->
-                handle
-                    .createQuery("SELECT admin_token_hash FROM instagram_accounts WHERE instagram_account_id = :accountId")
-                    .bind("accountId", accountId)
-                    .mapTo<String>()
-                    .findFirst()
-                    .orElse(null)
-            } ?: return AdminTokenVerification.UnknownAccount
+    ): AccountTokenVerification = verifyAccountToken(findHash(accountId, "admin_token_hash"), candidateToken)
 
-        if (candidateToken == null) return AdminTokenVerification.Mismatch
-        return if (TokenHasher.matches(TokenHasher.sha256(candidateToken), storedHash)) {
-            AdminTokenVerification.Match
-        } else {
-            AdminTokenVerification.Mismatch
+    /**
+     * Hashes [candidateToken] and compares it against [accountId]'s stored read-token hash. Used
+     * by the public gallery routes, which are lower-privilege than admin routes but - unlike the
+     * single shared token this replaced - still scoped to exactly one account per token.
+     */
+    fun verifyReadToken(
+        accountId: String,
+        candidateToken: String?,
+    ): AccountTokenVerification = verifyAccountToken(findHash(accountId, "read_token_hash"), candidateToken)
+
+    /** [column] is never client input - always one of the two fixed literals above. */
+    private fun findHash(
+        accountId: String,
+        column: String,
+    ): String? =
+        jdbi.withHandle<String?, Exception> { handle ->
+            handle
+                .createQuery("SELECT $column FROM instagram_accounts WHERE instagram_account_id = :accountId")
+                .bind("accountId", accountId)
+                .mapTo<String>()
+                .findFirst()
+                .orElse(null)
         }
-    }
 }
 
 /** Persistence boundary for standalone ingestion's refreshable Instagram access token. */

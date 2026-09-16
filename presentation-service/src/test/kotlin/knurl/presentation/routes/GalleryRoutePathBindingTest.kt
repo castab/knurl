@@ -4,9 +4,8 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import knurl.domain.config.S3Settings
-import knurl.domain.repositories.AccountRepository
+import knurl.domain.repositories.AccountTokenVerification
 import knurl.domain.repositories.GalleryRepository
-import knurl.presentation.auth.BearerAuth
 import knurl.presentation.s3.Presigner
 import org.http4k.contract.contract
 import org.http4k.core.Method
@@ -48,6 +47,22 @@ private object NeverConnectDataSource : DataSource {
     override fun isWrapperFor(iface: Class<*>?): Boolean = false
 }
 
+private const val ACCOUNT = "17841457350963368"
+private val GALLERY = Uuid.random().toString()
+
+/**
+ * An in-memory stand-in for `AccountRepository::verifyReadToken`/`::verifyAdminToken`, so the
+ * path-binding tests below keep [NeverConnectDataSource]'s "no handler may reach the database"
+ * guarantee meaningful for [GalleryRepository]/`AdminGalleryRepository` calls specifically - if
+ * token verification itself queried the real (throwing) database, as `AccountRepository` does,
+ * every request here would fail at that step regardless of whether the path bound correctly,
+ * which is exactly what this file needs to distinguish.
+ */
+private fun fakeVerify(expectedToken: String): (accountId: String, candidateToken: String?) -> AccountTokenVerification =
+    { _, candidateToken ->
+        if (candidateToken == expectedToken) AccountTokenVerification.Match else AccountTokenVerification.Mismatch
+    }
+
 private fun testApp(): org.http4k.core.HttpHandler {
     val jdbi = Jdbi.create(NeverConnectDataSource)
     val presigner =
@@ -62,16 +77,13 @@ private fun testApp(): org.http4k.core.HttpHandler {
             ),
             java.time.Duration.ofSeconds(6.hours.inWholeSeconds),
         )
-    val galleryRoutes = GalleryRoutes(GalleryRepository(jdbi), presigner)
-    val adminGalleryRoutes = AdminGalleryRoutes(GalleryRepository(jdbi), AccountRepository(jdbi))
+    val galleryRoutes = GalleryRoutes(GalleryRepository(jdbi), presigner, fakeVerify("token"))
+    val adminGalleryRoutes = AdminGalleryRoutes(GalleryRepository(jdbi), fakeVerify("admin-token"))
     return contract {
-        routes += galleryRoutes.routes(BearerAuth("token"))
+        routes += galleryRoutes.routes()
         routes += adminGalleryRoutes.routes()
     }
 }
-
-private const val ACCOUNT = "17841457350963368"
-private val GALLERY = Uuid.random().toString()
 
 /**
  * Guards the one mistake in these route definitions that compiles perfectly and fails silently.
@@ -85,7 +97,9 @@ private val GALLERY = Uuid.random().toString()
  * These tests pin the binding by exploiting the fact that a gallery id is parsed as a UUID before
  * anything else happens: a well-formed uuid in the right position gets past the parse (and on to the
  * database, which is why the datasource here refuses to connect), while anything else - a literal
- * segment, or the numeric account id - fails it and produces a very recognisable 400.
+ * segment, or the numeric account id - fails it and produces a very recognisable 400. Every request
+ * below carries a token that [fakeVerify] accepts, so auth itself never reaches the database either
+ * - only [GalleryRepository]'s own queries do, which is the signal these tests are actually reading.
  */
 class GalleryRoutePathBindingTest :
     FunSpec({
@@ -154,7 +168,7 @@ class GalleryRoutePathBindingTest :
             )
         }
 
-        test("gallery reads reject an absent or incorrect public bearer token before touching the database") {
+        test("gallery reads reject an absent or incorrect read token before touching the database") {
             app(Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries")).status shouldBe Status.UNAUTHORIZED
             app(
                 Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries/$GALLERY")

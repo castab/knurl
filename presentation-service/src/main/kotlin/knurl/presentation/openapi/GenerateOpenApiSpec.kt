@@ -4,7 +4,6 @@ import knurl.domain.config.S3Settings
 import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.CatalogRepository
 import knurl.domain.repositories.GalleryRepository
-import knurl.presentation.auth.BearerAuth
 import knurl.presentation.routes.AdminCatalogRoutes
 import knurl.presentation.routes.AdminGalleryRoutes
 import knurl.presentation.routes.GalleryRoutes
@@ -46,16 +45,15 @@ fun main(args: Array<String>) {
             ),
             Duration.ofSeconds(21600),
         )
-    val bearerAuth = BearerAuth("placeholder")
-    val galleryRoutes = GalleryRoutes(galleryRepository, presigner)
-    val adminCatalogRoutes = AdminCatalogRoutes(catalogRepository, accountRepository, presigner)
-    val adminGalleryRoutes = AdminGalleryRoutes(galleryRepository, accountRepository)
+    val galleryRoutes = GalleryRoutes(galleryRepository, presigner, accountRepository::verifyReadToken)
+    val adminCatalogRoutes = AdminCatalogRoutes(catalogRepository, accountRepository::verifyAdminToken, presigner)
+    val adminGalleryRoutes = AdminGalleryRoutes(galleryRepository, accountRepository::verifyAdminToken)
 
     val app =
         contract {
             renderer = OpenApi3(ApiInfo("Knurl", "v1.0"), Jackson)
             descriptionPath = "/openapi.json"
-            routes += galleryRoutes.routes(bearerAuth)
+            routes += galleryRoutes.routes()
             routes += adminCatalogRoutes.routes()
             routes += adminGalleryRoutes.routes()
         }

@@ -5,7 +5,10 @@ import io.kotest.core.spec.style.FunSpec
 import knurl.domain.config.DatabaseSettings
 import knurl.domain.config.S3Settings
 
-private fun testConfig(presignedGetTtlSeconds: Long): PresentationConfig =
+private fun testConfig(
+    presignedGetTtlSeconds: Long = 21_600,
+    rateLimitPerMinute: Int = 120,
+): PresentationConfig =
     PresentationConfig(
         database = DatabaseSettings(url = "postgres://user:pass@localhost:5432/db"),
         s3 =
@@ -15,8 +18,8 @@ private fun testConfig(presignedGetTtlSeconds: Long): PresentationConfig =
                 accessKeyId = "test-access-key",
                 secretAccessKey = "test-secret-key",
             ),
-        apiBearerToken = "test-token",
         presignedGetTtlSeconds = presignedGetTtlSeconds,
+        rateLimitPerMinute = rateLimitPerMinute,
     )
 
 /**
@@ -50,6 +53,22 @@ class PresentationConfigTest :
         test("rejects a negative TTL") {
             shouldThrow<IllegalArgumentException> {
                 testConfig(presignedGetTtlSeconds = -1)
+            }
+        }
+
+        test("accepts a positive rate limit") {
+            testConfig(rateLimitPerMinute = 1)
+        }
+
+        test("rejects a zero rate limit") {
+            shouldThrow<IllegalArgumentException> {
+                testConfig(rateLimitPerMinute = 0)
+            }
+        }
+
+        test("rejects a negative rate limit") {
+            shouldThrow<IllegalArgumentException> {
+                testConfig(rateLimitPerMinute = -1)
             }
         }
     })

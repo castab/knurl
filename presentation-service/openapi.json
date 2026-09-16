@@ -79,7 +79,7 @@
           }
         },
         "security" : [ {
-          "galleryBearer" : [ ]
+          "accountReadBearer" : [ ]
         } ],
         "operationId" : "getApiV1Accounts_accountId_Galleries",
         "deprecated" : false,
@@ -194,7 +194,7 @@
           }
         },
         "security" : [ {
-          "galleryBearer" : [ ]
+          "accountReadBearer" : [ ]
         } ],
         "operationId" : "getApiV1Accounts_accountId_Galleries_galleryId",
         "deprecated" : false,
@@ -257,7 +257,7 @@
           }
         },
         "security" : [ {
-          "galleryBearer" : [ ]
+          "accountReadBearer" : [ ]
         } ],
         "operationId" : "postApiV1Accounts_accountId_Galleries_galleryId_Track",
         "deprecated" : false,
@@ -1511,7 +1511,7 @@
       }
     },
     "securitySchemes" : {
-      "galleryBearer" : {
+      "accountReadBearer" : {
         "scheme" : "bearer",
         "type" : "http"
       },

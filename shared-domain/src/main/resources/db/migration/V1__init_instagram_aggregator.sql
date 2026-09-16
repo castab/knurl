@@ -3,16 +3,21 @@
 -- 0. Multi-tenant Account Registry
 -- `instagram_account_id` is the Graph API business account id - public, non-secret information,
 -- safe to use as a URL path segment. `admin_token_hash` gates admin access (catalog
--- browse/selection) to this account's own content; it's set/rotated by whichever
--- `ingestion-service` instance owns this account, not by `presentation-service`.
+-- browse/selection) to this account's own content; `read_token_hash` gates the public,
+-- lower-privilege gallery-read API to this account's own galleries - each account gets its own,
+-- so a token valid for one account's gallery reads can never be replayed against another's (the
+-- single API_BEARER_TOKEN shared by every account this replaced could). Both are
+-- set/rotated by whichever `ingestion-service` instance owns this account, not by
+-- `presentation-service`.
 --
--- Only a TokenHasher.sha256 digest of the token is ever stored here, never the plaintext - a
+-- Only a TokenHasher.sha256 digest of each token is ever stored here, never the plaintext - a
 -- database read alone (backup, replica, log, compromised ops account) must not yield a working
--- admin credential. AccountRepository.verifyAdminToken re-hashes the candidate and compares
--- digests; the plaintext never needs to round-trip back out, so a one-way hash is enough.
+-- credential. AccountRepository.verifyAdminToken/verifyReadToken re-hash the candidate and
+-- compare digests; the plaintext never needs to round-trip back out, so a one-way hash is enough.
 CREATE TABLE instagram_accounts (
     instagram_account_id VARCHAR(100) PRIMARY KEY,
     admin_token_hash TEXT NOT NULL,
+    read_token_hash TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

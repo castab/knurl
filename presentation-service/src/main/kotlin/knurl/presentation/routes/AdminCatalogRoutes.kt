@@ -3,7 +3,6 @@ package knurl.presentation.routes
 import knurl.domain.models.CatalogEntry
 import knurl.domain.models.CatalogFilter
 import knurl.domain.models.PurgeRequestResult
-import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.CatalogRepository
 import knurl.presentation.s3.Presigner
 import kotlinx.serialization.Serializable
@@ -179,14 +178,15 @@ internal fun CatalogEntry.toResponse(presigner: Presigner): AdminCatalogItemResp
  * `ingestion-service`'s job, and these routes only record intent in the database, which is what
  * keeps the bucket credentials' destructive surface out of the internet-facing service.
  *
- * Authorization is per-account via [authorizeAccount], not the single global
- * [knurl.presentation.auth.BearerAuth] used by gallery tracking - a single presentation-service
- * deployment serves many accounts, so each account's own admin token is required and one account's
- * token must never work against another's content.
+ * Authorization is per-account via [authorizeAccount] and `AccountRepository.verifyAdminToken` - a
+ * single presentation-service deployment serves many accounts, so each account's own admin token
+ * is required and one account's token must never work against another's content. Gallery reads
+ * ([GalleryRoutes]) go through the same [authorizeAccount], scoped instead to each account's
+ * lower-privilege read token via `AccountRepository.verifyReadToken`.
  */
 class AdminCatalogRoutes(
     private val catalogRepository: CatalogRepository,
-    private val accountRepository: AccountRepository,
+    private val verifyAdminToken: VerifyAccountToken,
     private val presigner: Presigner,
 ) {
     private val accountIdPath = Path.of("accountId")
@@ -262,7 +262,7 @@ class AdminCatalogRoutes(
             )
         } bindContract Method.GET to { accountId, _ ->
             { request ->
-                authorizeAccount(accountRepository, accountId, request) {
+                authorizeAccount(accountId, request, verifyAdminToken) {
                     runCatching { catalogFilter(request) }.fold(
                         onSuccess = { filter ->
                             val pageSize = limitQuery(request).coerceIn(1, MAX_PAGE_SIZE)
@@ -320,7 +320,7 @@ class AdminCatalogRoutes(
             )
         } bindContract Method.DELETE to { accountId, _, _ ->
             { request ->
-                authorizeAccount(accountRepository, accountId, request) {
+                authorizeAccount(accountId, request, verifyAdminToken) {
                     val requested = mediaPurgeRequestLens(request).shortcodes
                     when {
                         requested.isEmpty() -> {

@@ -4,6 +4,9 @@ import com.sksamuel.scrimage.ImmutableImage
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 
 private const val SMALL = 400
 private const val LARGE = 800
@@ -64,5 +67,39 @@ class MediaProcessorTest :
         test("parseVideoDimensions rejects missing or invalid dimensions") {
             shouldThrow<IllegalArgumentException> { parseVideoDimensions("0,1080\n") }
             shouldThrow<IllegalArgumentException> { parseVideoDimensions("not dimensions\n") }
+        }
+
+        test("copyWithLimit copies a source at or under the limit in full") {
+            val source = ByteArray(100) { it.toByte() }
+            val output = ByteArrayOutputStream()
+
+            copyWithLimit(ByteArrayInputStream(source), output, limit = 100, sourceUrl = "http://example/video")
+
+            output.toByteArray() shouldBe source
+        }
+
+        test("copyWithLimit aborts once the source exceeds the limit") {
+            val source = ByteArray(101) { it.toByte() }
+            val output = ByteArrayOutputStream()
+
+            shouldThrow<IOException> {
+                copyWithLimit(ByteArrayInputStream(source), output, limit = 100, sourceUrl = "http://example/video")
+            }
+        }
+
+        test("copyWithLimit's exception names the source URL, so a rejected download is traceable in logs") {
+            val source = ByteArray(101)
+
+            val exception =
+                shouldThrow<IOException> {
+                    copyWithLimit(
+                        ByteArrayInputStream(source),
+                        ByteArrayOutputStream(),
+                        limit = 100,
+                        sourceUrl = "http://example/oversized",
+                    )
+                }
+
+            exception.message shouldBe "Source video at http://example/oversized exceeded the 100 byte download limit"
         }
     })
