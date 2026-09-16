@@ -10,8 +10,8 @@ dependencies {
 
     api("com.zaxxer:HikariCP:5.1.0")
 
-    implementation("org.flywaydb:flyway-core:12.9.0")
-    implementation("org.flywaydb:flyway-database-postgresql:12.9.0")
+    implementation("org.flywaydb:flyway-core:13.6.0")
+    implementation("org.flywaydb:flyway-database-postgresql:13.6.0")
 
     implementation("org.postgresql:postgresql:42.7.7")
 }
