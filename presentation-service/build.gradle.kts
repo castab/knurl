@@ -32,6 +32,23 @@ dependencies {
     // no request log, no failed-auth record, no Hikari/Undertow/AWS SDK diagnostics.
     // Same binding and version as ingestion-service.
     implementation("org.slf4j:slf4j-simple:2.0.16")
+
+    // Pins the server stack that http4k-server-undertow/http4k-format-jackson pull in transitively,
+    // so a version bump there happens only via a deliberate edit to this block, never silently as a
+    // side effect of bumping the http4k-bom version above. Versions below are whatever the BOM
+    // currently resolves to - re-pin these (./gradlew :presentation-service:dependencies) whenever
+    // http4k-bom is bumped, rather than letting the pin quietly go stale and mask a real upgrade.
+    implementation(platform("io.netty:netty-bom:4.1.137.Final"))
+    constraints {
+        implementation("io.undertow:undertow-core:2.4.2.Final")
+        implementation("org.jboss.xnio:xnio-api:3.8.16.Final")
+        implementation("org.jboss.xnio:xnio-nio:3.8.16.Final")
+        implementation("com.fasterxml.jackson.core:jackson-core:2.22.2")
+        implementation("com.fasterxml.jackson.core:jackson-databind:2.22.2")
+        // jackson-annotations versions independently of core/databind and hadn't reached 2.22.2 as
+        // of this pin - 2.22 is the version conflict resolution already converges on above.
+        implementation("com.fasterxml.jackson.core:jackson-annotations:2.22")
+    }
 }
 
 /**

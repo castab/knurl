@@ -292,6 +292,7 @@ class InstagramAccessTokenProvidersTest :
                     accessToken = "initial-token",
                     businessAccountId = "account-1",
                     adminToken = "admin-token",
+                    readToken = "read-token",
                 )
 
             createInstagramAccessTokenProvider(
@@ -319,6 +320,7 @@ class InstagramAccessTokenProvidersTest :
                     InstagramSettings(
                         businessAccountId = "account-1",
                         adminToken = "admin-token",
+                        readToken = "read-token",
                         credentialProvider = InstagramCredentialProviderType.HTTP_BROKER,
                         credentialBroker =
                             CredentialBrokerSettings(
@@ -340,6 +342,7 @@ class InstagramAccessTokenProvidersTest :
                 InstagramSettings(
                     businessAccountId = "account-1",
                     adminToken = "admin-token",
+                    readToken = "read-token",
                     credentialProvider = InstagramCredentialProviderType.HTTP_BROKER,
                     credentialBroker =
                         CredentialBrokerSettings(

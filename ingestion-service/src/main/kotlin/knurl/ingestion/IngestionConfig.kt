@@ -32,6 +32,15 @@ data class InstagramSettings(
      * startup - rotate by changing this value and restarting.
      */
     val adminToken: String,
+    /**
+     * Operator-chosen secret (not an Instagram API credential) gating this account's own,
+     * lower-privilege public gallery-read API on presentation-service. Distinct from [adminToken]
+     * (and, unlike the shared `API_BEARER_TOKEN` this replaced, distinct per account) so a
+     * browser-exposed read token for one account can never be replayed to read another's, and
+     * compromising it never grants admin access. Registered into `instagram_accounts` on every
+     * startup - rotate by changing this value and restarting.
+     */
+    val readToken: String,
     val apiVersion: String = "v21.0",
     val credentialProvider: InstagramCredentialProviderType = InstagramCredentialProviderType.DATABASE,
     val credentialBroker: CredentialBrokerSettings = CredentialBrokerSettings(),

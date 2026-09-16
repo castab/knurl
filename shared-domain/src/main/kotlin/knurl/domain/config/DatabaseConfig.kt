@@ -17,16 +17,18 @@ import javax.sql.DataSource
  */
 object DatabaseConfig {
     private const val DEFAULT_POSTGRES_PORT = 5432
+    private val LOOPBACK_HOSTS = setOf("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1")
 
     /**
      * Railway (and Heroku-style) DATABASE_URL values arrive as `postgres://user:pass@host:port/db`,
      * which HikariCP/the JDBC driver cannot consume directly - it requires a `jdbc:postgresql://` URL
      * with credentials passed separately. This converts one form to the other; a URL that is already
-     * in `jdbc:` form is passed through unchanged.
+     * in `jdbc:` form only gets [withEnforcedSsl] applied, nothing else changed.
      */
     fun parseJdbcUrl(raw: String): JdbcCredentials {
         if (raw.startsWith("jdbc:")) {
-            return JdbcCredentials(jdbcUrl = raw, username = null, password = null)
+            val jdbcUrl = withEnforcedSsl(raw, hostFromJdbcUrl(raw))
+            return JdbcCredentials(jdbcUrl = jdbcUrl, username = null, password = null)
         }
 
         val uri = URI(raw)
@@ -50,10 +52,39 @@ object DatabaseConfig {
         val port = if (uri.port == -1) DEFAULT_POSTGRES_PORT else uri.port
         // rawQuery, not query: getQuery() is percent-decoded, which would corrupt an encoded '&' or '='.
         val query = uri.rawQuery?.let { "?$it" } ?: ""
-        val jdbcUrl = "jdbc:postgresql://$host:$port${uri.rawPath}$query"
+        val jdbcUrl = withEnforcedSsl("jdbc:postgresql://$host:$port${uri.rawPath}$query", host)
 
         return JdbcCredentials(jdbcUrl = jdbcUrl, username = username, password = password)
     }
+
+    /**
+     * Appends `sslmode=require` when [jdbcUrl] doesn't already specify a mode and [host] isn't a
+     * loopback address. The PostgreSQL JDBC driver's own default (`prefer`) silently falls back to
+     * an unencrypted connection if the server doesn't offer TLS - the wrong failure mode for
+     * anything that isn't local development, where it should be loud instead.
+     *
+     * Deliberately `require`, not `verify-full`: several managed Postgres providers terminate TLS
+     * with a certificate the JVM's default trust store can't validate, which would turn a stricter
+     * default into a startup outage this class can't anticipate for every provider. `require`
+     * already closes the actual gap here - a connection that silently isn't encrypted at all -
+     * without assuming anything about a provider's certificate chain. A deployment that wants
+     * hostname/CA verification can still opt in explicitly via `?sslmode=verify-full` in
+     * `DATABASE_URL`, which this function leaves untouched since a mode is already present.
+     */
+    private fun withEnforcedSsl(
+        jdbcUrl: String,
+        host: String?,
+    ): String {
+        if (host != null && isLoopbackHost(host)) return jdbcUrl
+        if (jdbcUrl.contains("sslmode=")) return jdbcUrl
+        val separator = if (jdbcUrl.contains("?")) "&" else "?"
+        return "$jdbcUrl${separator}sslmode=require"
+    }
+
+    private fun isLoopbackHost(host: String): Boolean = host in LOOPBACK_HOSTS || host.endsWith(".localhost") || host.startsWith("127.")
+
+    /** Best-effort host extraction from an already-`jdbc:`-prefixed URL, for [withEnforcedSsl]'s loopback check. */
+    private fun hostFromJdbcUrl(jdbcUrl: String): String? = runCatching { URI(jdbcUrl.removePrefix("jdbc:")).host }.getOrNull()
 
     fun createDataSource(settings: DatabaseSettings): HikariDataSource {
         val credentials = parseJdbcUrl(settings.url)

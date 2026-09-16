@@ -6,11 +6,12 @@ import knurl.domain.config.DatabaseConfig
 import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.CatalogRepository
 import knurl.domain.repositories.GalleryRepository
-import knurl.presentation.auth.BearerAuth
+import knurl.presentation.ratelimit.RateLimiter
 import knurl.presentation.routes.AdminCatalogRoutes
 import knurl.presentation.routes.AdminGalleryRoutes
 import knurl.presentation.routes.GalleryRoutes
 import knurl.presentation.s3.Presigner
+import knurl.presentation.security.SecurityHeaders
 import org.http4k.contract.contract
 import org.http4k.contract.openapi.ApiInfo
 import org.http4k.contract.openapi.v3.OpenApi3
@@ -18,6 +19,7 @@ import org.http4k.contract.ui.swaggerUiLite
 import org.http4k.core.HttpHandler
 import org.http4k.core.Response
 import org.http4k.core.Status
+import org.http4k.core.then
 import org.http4k.format.Jackson
 import org.http4k.routing.ResourceLoader
 import org.http4k.routing.bind
@@ -62,10 +64,9 @@ fun main() {
     val catalogRepository = CatalogRepository(jdbi)
 
     val presigner = Presigner.create(config.s3, Duration.ofSeconds(config.presignedGetTtlSeconds))
-    val bearerAuth = BearerAuth(config.apiBearerToken)
-    val galleryRoutes = GalleryRoutes(galleryRepository, presigner)
-    val adminCatalogRoutes = AdminCatalogRoutes(catalogRepository, accountRepository, presigner)
-    val adminGalleryRoutes = AdminGalleryRoutes(galleryRepository, accountRepository)
+    val galleryRoutes = GalleryRoutes(galleryRepository, presigner, accountRepository::verifyReadToken)
+    val adminCatalogRoutes = AdminCatalogRoutes(catalogRepository, accountRepository::verifyAdminToken, presigner)
+    val adminGalleryRoutes = AdminGalleryRoutes(galleryRepository, accountRepository::verifyAdminToken)
 
     val app =
         contract {
@@ -74,7 +75,7 @@ fun main() {
             // reflect over kotlinx.serialization types; see AGENTS.md's OpenAPI section.
             renderer = OpenApi3(ApiInfo("Knurl", "v1.0"), Jackson)
             descriptionPath = "/openapi.json"
-            routes += galleryRoutes.routes(bearerAuth)
+            routes += galleryRoutes.routes()
             routes += adminCatalogRoutes.routes()
             routes += adminGalleryRoutes.routes()
         }
@@ -93,7 +94,12 @@ fun main() {
         }
     }
 
-    val server = appWithDocsRedirect.asServer(Undertow(config.port)).start()
+    val rateLimiter = RateLimiter(maxRequestsPerWindow = config.rateLimitPerMinute)
+    // SecurityHeaders is the outermost filter so its response headers land on every response,
+    // including a 429 from RateLimiter short-circuiting before the real handler ever runs.
+    val serverHandler = SecurityHeaders.filter.then(rateLimiter.filter).then(appWithDocsRedirect)
+
+    val server = serverHandler.asServer(Undertow(config.port)).start()
     println("Knurl presentation-service listening on port ${config.port}")
     if (config.uiEnabled) {
         println("Gallery/Admin UI: http://localhost:${config.port}/")

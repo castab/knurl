@@ -9,29 +9,53 @@ class DatabaseConfigTest :
         test("converts a Railway-style postgres:// URL into JDBC form") {
             val credentials = DatabaseConfig.parseJdbcUrl("postgres://user:secret@dbhost:5432/railway")
 
-            credentials.jdbcUrl shouldBe "jdbc:postgresql://dbhost:5432/railway"
+            credentials.jdbcUrl shouldBe "jdbc:postgresql://dbhost:5432/railway?sslmode=require"
             credentials.username shouldBe "user"
             credentials.password shouldBe "secret"
         }
 
-        test("preserves query parameters when converting") {
-            val credentials = DatabaseConfig.parseJdbcUrl("postgres://user:secret@dbhost:5432/railway?sslmode=require")
+        test("preserves an existing sslmode query parameter instead of overriding it") {
+            val credentials = DatabaseConfig.parseJdbcUrl("postgres://user:secret@dbhost:5432/railway?sslmode=verify-full")
 
-            credentials.jdbcUrl shouldBe "jdbc:postgresql://dbhost:5432/railway?sslmode=require"
+            credentials.jdbcUrl shouldBe "jdbc:postgresql://dbhost:5432/railway?sslmode=verify-full"
         }
 
-        test("passes an already-JDBC URL through unchanged") {
+        test("appends sslmode after other existing query parameters with &, not ?") {
+            val credentials = DatabaseConfig.parseJdbcUrl("postgres://user:secret@dbhost:5432/railway?currentSchema=public")
+
+            credentials.jdbcUrl shouldBe "jdbc:postgresql://dbhost:5432/railway?currentSchema=public&sslmode=require"
+        }
+
+        test("does not force sslmode for a loopback host - local Postgres has no TLS configured") {
+            val credentials = DatabaseConfig.parseJdbcUrl("postgres://user:secret@localhost:5432/railway")
+
+            credentials.jdbcUrl shouldBe "jdbc:postgresql://localhost:5432/railway"
+        }
+
+        test("does not force sslmode for a 127.0.0.1 host") {
+            val credentials = DatabaseConfig.parseJdbcUrl("postgres://user:secret@127.0.0.1:5432/railway")
+
+            credentials.jdbcUrl shouldBe "jdbc:postgresql://127.0.0.1:5432/railway"
+        }
+
+        test("forces sslmode on an already-JDBC URL for a non-loopback host") {
             val credentials = DatabaseConfig.parseJdbcUrl("jdbc:postgresql://dbhost:5432/railway")
 
-            credentials.jdbcUrl shouldBe "jdbc:postgresql://dbhost:5432/railway"
+            credentials.jdbcUrl shouldBe "jdbc:postgresql://dbhost:5432/railway?sslmode=require"
             credentials.username shouldBe null
             credentials.password shouldBe null
+        }
+
+        test("passes an already-JDBC URL through unchanged for a loopback host") {
+            val credentials = DatabaseConfig.parseJdbcUrl("jdbc:postgresql://localhost:5432/railway")
+
+            credentials.jdbcUrl shouldBe "jdbc:postgresql://localhost:5432/railway"
         }
 
         test("defaults to port 5432 when the URL omits a port") {
             val credentials = DatabaseConfig.parseJdbcUrl("postgres://user:secret@dbhost/railway")
 
-            credentials.jdbcUrl shouldBe "jdbc:postgresql://dbhost:5432/railway"
+            credentials.jdbcUrl shouldBe "jdbc:postgresql://dbhost:5432/railway?sslmode=require"
             credentials.username shouldBe "user"
             credentials.password shouldBe "secret"
         }

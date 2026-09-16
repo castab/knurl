@@ -9,6 +9,8 @@ import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.model.PutObjectRequest
 import java.io.FilterInputStream
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.nio.file.Files
 import java.time.Duration
 import java.util.concurrent.TimeUnit
@@ -23,6 +25,16 @@ private const val WEBP_QUALITY = 80
  * under the 128MB heap budget. Instagram's own CDN assets sit far below this.
  */
 private const val MAX_SOURCE_IMAGE_BYTES = 32L * 1024 * 1024
+
+/**
+ * Hard ceiling on a source video download. Unlike an image, a video is never decoded into memory
+ * here - it streams straight to S3 (or, for a chunked/unknown-length response, to a local temp
+ * file - see [processVideoPassthrough]) - so this isn't a heap-OOM guard the way
+ * [MAX_SOURCE_IMAGE_BYTES] is. It exists for the temp-file branch specifically: without a cap, a
+ * misbehaving or malicious upstream response can fill the container's disk indefinitely. 750MiB
+ * comfortably covers real Instagram feed/Reels content while still being a bounded ceiling.
+ */
+private const val MAX_SOURCE_VIDEO_BYTES = 750L * 1024 * 1024
 
 /** Content types this service will store verbatim on a video object; anything else falls back to `video/mp4`. */
 private val ALLOWED_VIDEO_CONTENT_TYPES = setOf("video/mp4", "video/quicktime", "video/webm")
@@ -68,6 +80,31 @@ internal fun parseVideoDimensions(output: String): VideoDimensions {
 }
 
 /**
+ * Copies [input] to [output] like [InputStream.copyTo], but aborts once more than [limit] bytes
+ * have been read - unlike the known-length streaming branch in [MediaProcessor.processVideoPassthrough],
+ * this path has no declared `Content-Length` to check upfront, so the only way to bound it is to
+ * count while copying. The caller's own `finally` deletes the partial temp file this leaves behind.
+ */
+internal fun copyWithLimit(
+    input: InputStream,
+    output: OutputStream,
+    limit: Long,
+    sourceUrl: String,
+) {
+    val buffer = ByteArray(8192)
+    var total = 0L
+    while (true) {
+        val read = input.read(buffer)
+        if (read < 0) break
+        total += read
+        if (total > limit) {
+            throw IOException("Source video at $sourceUrl exceeded the $limit byte download limit")
+        }
+        output.write(buffer, 0, read)
+    }
+}
+
+/**
  * Grid geometry: scale until the shorter side fills the box, then center-crop the longer side away.
  * Every grid that consumes a small variant is a fixed 1:1 cell (`aspect-ratio: 1 / 1` in the gallery
  * and admin stylesheets), so a uniform square is what that view actually wants.
@@ -101,6 +138,8 @@ class MediaProcessor(
     private val okHttpClient: OkHttpClient,
     private val s3Client: S3Client,
     private val bucketName: String,
+    /** Defaulted so production always gets the real cap; tests override it to something small. */
+    private val maxSourceVideoBytes: Long = MAX_SOURCE_VIDEO_BYTES,
 ) {
     fun processImage(
         sourceUrl: String,
@@ -181,6 +220,18 @@ class MediaProcessor(
             val contentType = if (upstreamContentType in ALLOWED_VIDEO_CONTENT_TYPES) upstreamContentType!! else "video/mp4"
             val contentLength = body.contentLength()
 
+            // The known-length branch below already bounds its read to exactly `contentLength`
+            // bytes (RequestBody.fromInputStream(input, contentLength) stops there), so this
+            // upfront check alone is enough to cover it. Only the unknown-length branch - which
+            // streams to a local temp file with no length to stop at - needs its own guard further
+            // down, since a declared length can't bound a read that has no declared length.
+            if (contentLength > maxSourceVideoBytes) {
+                throw IOException(
+                    "Source video at $sourceUrl is $contentLength bytes, over the " +
+                        "$maxSourceVideoBytes byte download limit",
+                )
+            }
+
             val putObjectRequest =
                 PutObjectRequest
                     .builder()
@@ -204,12 +255,16 @@ class MediaProcessor(
                         val tempFile = Files.createTempFile("knurl-video-", ".tmp")
                         try {
                             ProbingInputStream(body.byteStream(), probe).use { input ->
-                                Files.newOutputStream(tempFile).use { output -> input.copyTo(output) }
+                                Files.newOutputStream(tempFile).use { output ->
+                                    copyWithLimit(input, output, maxSourceVideoBytes, sourceUrl)
+                                }
                             }
                             val size = Files.size(tempFile)
                             s3Client.putObject(putObjectRequest, RequestBody.fromFile(tempFile))
                             size
                         } finally {
+                            // Runs even when copyWithLimit throws past the cap, so a rejected
+                            // download never leaves a partial file behind.
                             Files.deleteIfExists(tempFile)
                         }
                     }

@@ -78,7 +78,7 @@ fun main() =
         val syncConfigurationRepository = SyncConfigurationRepository(jdbi)
         val objectKeyRepository = ObjectKeyRepository(jdbi)
 
-        accountRepository.register(config.instagram.businessAccountId, config.instagram.adminToken)
+        accountRepository.register(config.instagram.businessAccountId, config.instagram.adminToken, config.instagram.readToken)
 
         val okHttpClient =
             OkHttpClient
