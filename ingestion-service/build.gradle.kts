@@ -12,8 +12,8 @@ dependencies {
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    implementation("com.sksamuel.scrimage:scrimage-core:4.1.3")
-    implementation("com.sksamuel.scrimage:scrimage-webp:4.1.3")
+    implementation("com.sksamuel.scrimage:scrimage-core:4.6.8")
+    implementation("com.sksamuel.scrimage:scrimage-webp:4.6.8")
 
     implementation(platform("software.amazon.awssdk:bom:2.54.17"))
     implementation("software.amazon.awssdk:s3")
