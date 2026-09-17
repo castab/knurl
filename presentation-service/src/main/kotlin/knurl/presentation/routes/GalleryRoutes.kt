@@ -12,6 +12,7 @@ import org.http4k.contract.bindContract
 import org.http4k.contract.div
 import org.http4k.contract.meta
 import org.http4k.core.Method
+import org.http4k.core.Request
 import org.http4k.core.Response
 import org.http4k.core.Status
 import org.http4k.core.with
@@ -218,6 +219,7 @@ class GalleryRoutes(
 ) {
     private val accountIdPath = Path.of("accountId")
     private val galleryIdPath = Path.of("galleryId")
+    private val namePath = Path.of("name")
     private val sortQuery = Query.string().defaulted("sort", "recent")
     private val limitQuery = Query.int().defaulted("limit", 12)
     private val pageQuery = Query.int().defaulted("page", 1)
@@ -248,6 +250,48 @@ class GalleryRoutes(
             galleryRepository.find(accountId, galleryId)
                 ?: return Response(Status.NOT_FOUND).with(errorResponseLens of ErrorResponse("gallery not found"))
         return onFound(gallery)
+    }
+
+    /**
+     * Resolves a `{name}` path segment to one of this account's galleries by (case- and
+     * whitespace-insensitive) name.
+     *
+     * Unlike [withGallery] there is no 400 case: every string is a name that could plausibly exist,
+     * so a miss is always "not found", never "malformed request".
+     */
+    private fun withGalleryByName(
+        accountId: String,
+        name: String,
+        onFound: (Gallery) -> Response,
+    ): Response {
+        val gallery =
+            galleryRepository.findByName(accountId, name)
+                ?: return Response(Status.NOT_FOUND).with(errorResponseLens of ErrorResponse("gallery not found"))
+        return onFound(gallery)
+    }
+
+    /** Shared by the uuid- and name-resolved content routes once each has a [Gallery] in hand. */
+    private fun galleryContentResponse(
+        request: Request,
+        gallery: Gallery,
+    ): Response {
+        val sortResult = runCatching { SortOrder.fromQueryParam(sortQuery(request)) }
+        return sortResult.fold(
+            onSuccess = { sort ->
+                val pageSize = limitQuery(request).coerceIn(1, MAX_PAGE_SIZE)
+                val page = galleryRepository.findContentPage(gallery.id, sort, pageSize, pageQuery(request))
+                val body =
+                    GalleryResponse(
+                        gallery = gallery.toResponse(),
+                        data = page.items.map { it.toResponse(presigner) },
+                        pagination = paginationMeta(request, page),
+                    )
+                Response(Status.OK).with(galleryResponseLens of body)
+            },
+            onFailure = {
+                Response(Status.BAD_REQUEST).with(errorResponseLens of ErrorResponse("invalid sort value"))
+            },
+        )
     }
 
     private fun listGalleries(): ContractRoute =
@@ -299,26 +343,32 @@ class GalleryRoutes(
         } bindContract Method.GET to { accountId, _, rawGalleryId ->
             { request ->
                 authorizeAccount(accountId, request, verifyReadToken) {
-                    withGallery(accountId, rawGalleryId) { gallery ->
-                        val sortResult = runCatching { SortOrder.fromQueryParam(sortQuery(request)) }
-                        sortResult.fold(
-                            onSuccess = { sort ->
-                                val pageSize = limitQuery(request).coerceIn(1, MAX_PAGE_SIZE)
-                                val page =
-                                    galleryRepository.findContentPage(gallery.id, sort, pageSize, pageQuery(request))
-                                val body =
-                                    GalleryResponse(
-                                        gallery = gallery.toResponse(),
-                                        data = page.items.map { it.toResponse(presigner) },
-                                        pagination = paginationMeta(request, page),
-                                    )
-                                Response(Status.OK).with(galleryResponseLens of body)
-                            },
-                            onFailure = {
-                                Response(Status.BAD_REQUEST).with(errorResponseLens of ErrorResponse("invalid sort value"))
-                            },
-                        )
-                    }
+                    withGallery(accountId, rawGalleryId) { gallery -> galleryContentResponse(request, gallery) }
+                }
+            }
+        }
+
+    /** Same content page as [listGalleryContent], resolved by name instead of id. */
+    private fun getGalleryByName(): ContractRoute =
+        "/api/v1/accounts" / accountIdPath / "galleries" / "by-name" / namePath meta {
+            summary = "Look up a page of one gallery's posts by name, sorted by recency or view count"
+            security = readBearerSecurity
+            queries += sortQuery
+            queries += limitQuery
+            queries += pageQuery
+            returning(
+                Status.OK,
+                galleryResponseLens to
+                    GalleryResponse(
+                        EXAMPLE_GALLERY,
+                        listOf(EXAMPLE_GALLERY_ITEM),
+                        examplePagination("/api/v1/accounts/{accountId}/galleries/by-name/{name}"),
+                    ),
+            )
+        } bindContract Method.GET to { accountId, _, _, rawName ->
+            { request ->
+                authorizeAccount(accountId, request, verifyReadToken) {
+                    withGalleryByName(accountId, rawName) { gallery -> galleryContentResponse(request, gallery) }
                 }
             }
         }
@@ -373,5 +423,5 @@ class GalleryRoutes(
             }
         }
 
-    fun routes(): List<ContractRoute> = listOf(listGalleries(), listGalleryContent(), trackEvent())
+    fun routes(): List<ContractRoute> = listOf(listGalleries(), listGalleryContent(), getGalleryByName(), trackEvent())
 }

@@ -86,6 +86,121 @@
         "callbacks" : null
       }
     },
+    "/api/v1/accounts/{accountId}/galleries/by-name/{name}" : {
+      "get" : {
+        "summary" : "Look up a page of one gallery's posts by name, sorted by recency or view count",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "query",
+          "name" : "sort",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "page",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "name",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "gallery" : {
+                    "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+                    "name" : "Travel",
+                    "itemCount" : 24,
+                    "publishedCount" : 22,
+                    "createdAt" : "2024-01-01T00:00:00Z",
+                    "updatedAt" : "2024-01-02T00:00:00Z"
+                  },
+                  "data" : [ {
+                    "id" : "01234567-89ab-cdef-0123-456789abcdef",
+                    "mediaType" : "IMAGE",
+                    "caption" : "An example caption",
+                    "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+                    "timestamp" : "2024-01-01T00:00:00Z",
+                    "mediaItems" : [ {
+                      "mediaType" : "IMAGE",
+                      "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+                      "smallFileSizeBytes" : 18432,
+                      "smallWidth" : 400,
+                      "smallHeight" : 400,
+                      "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+                      "largeFileSizeBytes" : 84736,
+                      "largeWidth" : 800,
+                      "largeHeight" : 600,
+                      "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+                      "videoFileSizeBytes" : 1048576,
+                      "videoWidth" : 1920,
+                      "videoHeight" : 1080,
+                      "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+                    } ],
+                    "viewCount" : 0,
+                    "clickCount" : 0
+                  } ],
+                  "pagination" : {
+                    "totalRecords" : 100,
+                    "currentPage" : 2,
+                    "totalPages" : 10,
+                    "links" : {
+                      "first" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=1",
+                      "prev" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=1",
+                      "self" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=2",
+                      "next" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=3",
+                      "last" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=10"
+                    }
+                  }
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/GalleryResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountReadBearer" : [ ]
+        } ],
+        "operationId" : "getApiV1Accounts_accountId_GalleriesBy_name_name",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
     "/api/v1/accounts/{accountId}/galleries/{galleryId}" : {
       "get" : {
         "summary" : "List a page of one gallery's posts, sorted by recency or view count",
@@ -946,11 +1061,11 @@
             "currentPage" : 2,
             "totalPages" : 10,
             "links" : {
-              "first" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=1",
-              "prev" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=1",
-              "self" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=2",
-              "next" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=3",
-              "last" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=10"
+              "first" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=1",
+              "prev" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=1",
+              "self" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=2",
+              "next" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=3",
+              "last" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=10"
             }
           }
         },
