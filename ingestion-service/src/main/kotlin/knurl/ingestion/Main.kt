@@ -207,11 +207,45 @@ fun main() {
 }
 
 /**
+ * The cutoff [AccountClaimRepository.claimDueAccount] should treat as "due" for one poll attempt.
+ *
+ * Under `runOnce`, every poll uses the *same* fixed [runOnceCutoff] - captured once before
+ * `feedSyncWorkerLoop`'s loop starts, not recomputed here - so an account becomes claimable at
+ * most once for the whole invocation: once successfully synced its `last_synced_at` moves past
+ * that fixed point in time and it stops being due for the rest of this run. Using "now" instead
+ * (e.g. an interval of zero relative to the current instant) would have the opposite, broken
+ * effect: the account would immediately become due again the moment it's released, and a worker
+ * would claim and re-sync it forever in a tight loop `RUN_ONCE` would never exit.
+ *
+ * Under the persistent-daemon case (`runOnce = false`), [runOnceCutoff] is ignored and the cutoff
+ * is [intervalSeconds] before [now] instead, recomputed fresh on every poll - there staleness
+ * genuinely means "how long ago relative to whenever we're asking", since there's no fixed
+ * invocation boundary the way a one-shot run has one.
+ *
+ * `RUN_ONCE` is a cron-triggered, one-shot invocation: the operator's own schedule (or, as
+ * importantly, an on-demand manual trigger right after curating a gallery) *is* the real cadence
+ * control, so gating it further behind a persisted `last_synced_at`/`intervalSeconds` would
+ * silently no-op a run triggered sooner than `intervalSeconds` after the last one - exactly the
+ * bug where a fresh gallery selection didn't show up on the very next manually-triggered run. Pure
+ * function so this exact reasoning is unit-testable on its own, the same reason
+ * `shouldStopPolling` (`DownloadWorker.kt`) is - both fixed a case where an inline `if` was
+ * missing a condition that wasn't obvious from the surrounding code.
+ */
+internal fun accountDueBefore(
+    runOnce: Boolean,
+    runOnceCutoff: Instant,
+    intervalSeconds: Long,
+    now: Instant,
+): Instant = if (runOnce) runOnceCutoff else now.minusSeconds(intervalSeconds)
+
+/**
  * Claims whichever account is due for a feed sync - any account in `instagram_accounts`, not just
  * the one this process bootstrapped - syncs it with no transaction held across the work, then
  * marks it synced on success. On failure the claim is simply left stale (see
  * [AccountClaimRepository]), reclaimable by any worker once its lease elapses; safe to run as
  * several concurrent coroutines, in this process or several others sharing the same database.
+ *
+ * See [accountDueBefore] for how `runOnce` changes what "due" means.
  */
 private suspend fun feedSyncWorkerLoop(
     accountClaimRepository: AccountClaimRepository,
@@ -230,8 +264,10 @@ private suspend fun feedSyncWorkerLoop(
     pollIntervalMs: Long,
     runOnce: Boolean,
 ) {
+    val runOnceCutoff = Instant.now()
     while (true) {
-        val claim = accountClaimRepository.claimDueAccount(intervalSeconds, leaseSeconds)
+        val dueBefore = accountDueBefore(runOnce, runOnceCutoff, intervalSeconds, Instant.now())
+        val claim = accountClaimRepository.claimDueAccount(dueBefore, leaseSeconds)
         if (claim == null) {
             if (runOnce) return
             delay(pollIntervalMs)

@@ -199,16 +199,26 @@ class AccountClaimRepository(
     private val jdbi: Jdbi,
 ) {
     /**
-     * Claims exactly one account whose `last_synced_at` is null or older than [intervalSeconds]
-     * and whose `sync_claimed_at` is null or older than [leaseSeconds] (an abandoned claim),
-     * ordered oldest-due-first. Returns null when nothing is currently due.
+     * Claims exactly one account whose `last_synced_at` is null or at/before [dueBefore], and
+     * whose `sync_claimed_at` is null or older than [leaseSeconds] (an abandoned claim), ordered
+     * oldest-due-first. Returns null when nothing is currently due.
+     *
+     * [dueBefore] is a caller-computed cutoff rather than an interval, deliberately: the caller
+     * decides whether it's relative to "now" (recomputed fresh on every poll, for a persistent
+     * daemon's continuous staleness check) or a single fixed instant captured once before a
+     * `RUN_ONCE` invocation's loop starts (see `feedSyncWorkerLoop` in `Main.kt`) - the latter is
+     * what makes each account claimable *at most once* per one-shot run: once successfully synced,
+     * its `last_synced_at` becomes newer than that fixed cutoff and it stops being due for the rest
+     * of that invocation, rather than being claimable again the instant it's released (an interval
+     * of "0 seconds relative to now" would never actually elapse, claiming the same account
+     * forever in a tight loop that `RUN_ONCE` would never exit).
      *
      * `LIMIT 1`, not a batch: a claimed account means running its entire multi-page feed sync, so
      * concurrency should come from running more independent workers (each claiming one account and
      * looping) rather than from claiming several accounts into one round trip.
      */
     fun claimDueAccount(
-        intervalSeconds: Long,
+        dueBefore: Instant,
         leaseSeconds: Long,
     ): AccountClaim? =
         jdbi.withHandle<AccountClaim?, Exception> { handle ->
@@ -218,7 +228,7 @@ class AccountClaimRepository(
                     WITH claimable AS (
                         SELECT instagram_account_id, sync_claimed_at
                         FROM instagram_accounts
-                        WHERE (last_synced_at IS NULL OR last_synced_at <= now() - (:intervalSeconds || ' seconds')::interval)
+                        WHERE (last_synced_at IS NULL OR last_synced_at <= :dueBefore)
                           AND (sync_claimed_at IS NULL OR sync_claimed_at <= now() - (:leaseSeconds || ' seconds')::interval)
                         ORDER BY last_synced_at ASC NULLS FIRST
                         FOR UPDATE SKIP LOCKED
@@ -230,7 +240,7 @@ class AccountClaimRepository(
                     WHERE instagram_accounts.instagram_account_id = claimable.instagram_account_id
                     RETURNING instagram_accounts.instagram_account_id, claimable.sync_claimed_at AS previous_claimed_at
                     """.trimIndent(),
-                ).bind("intervalSeconds", intervalSeconds)
+                ).bind("dueBefore", dueBefore)
                 .bind("leaseSeconds", leaseSeconds)
                 .mapTo<AccountClaim>()
                 .findFirst()
