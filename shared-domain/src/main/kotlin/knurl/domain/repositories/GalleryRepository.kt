@@ -213,6 +213,32 @@ class GalleryRepository(
             ?.toDomain()
 
     /**
+     * Looks up a gallery by its normalised name instead of its id. `lower(btrim(...))` on both sides
+     * matches `uq_galleries_account_name` exactly, so this can never match more than one row.
+     */
+    fun findByName(
+        accountId: String,
+        name: String,
+    ): Gallery? = jdbi.withHandle<Gallery?, Exception> { handle -> findByNameWithHandle(handle, accountId, name) }
+
+    private fun findByNameWithHandle(
+        handle: Handle,
+        accountId: String,
+        name: String,
+    ): Gallery? =
+        handle
+            .createQuery(
+                selectGalleryColumns(
+                    "g.instagram_account_id = :accountId AND lower(btrim(g.name)) = lower(btrim(:name))",
+                ),
+            ).bind("accountId", accountId)
+            .bind("name", name)
+            .mapTo<GalleryRow>()
+            .findFirst()
+            .orElse(null)
+            ?.toDomain()
+
+    /**
      * One page of an account's galleries, ordered by name so a picker reads sensibly.
      *
      * `lower(btrim(name))` matches the unique index exactly, and `g.id` is the tiebreaker - two

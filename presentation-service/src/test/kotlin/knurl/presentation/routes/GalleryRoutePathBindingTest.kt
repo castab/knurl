@@ -49,6 +49,7 @@ private object NeverConnectDataSource : DataSource {
 
 private const val ACCOUNT = "17841457350963368"
 private val GALLERY = Uuid.random().toString()
+private const val GALLERY_NAME = "SomeGallery"
 
 /**
  * An in-memory stand-in for `AccountRepository::verifyReadToken`/`::verifyAdminToken`, so the
@@ -172,6 +173,32 @@ class GalleryRoutePathBindingTest :
             app(Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries")).status shouldBe Status.UNAUTHORIZED
             app(
                 Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries/$GALLERY")
+                    .header("Authorization", "Bearer wrong"),
+            ).status shouldBe Status.UNAUTHORIZED
+        }
+
+        test("the by-name route exists separately from the {galleryId} content route") {
+            // Would reach the database if "by-name"/{name} bound correctly; a 404 here would mean
+            // the literal "by-name" segment was swallowed as a {galleryId} value instead.
+            val result =
+                runCatching {
+                    app(
+                        Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries/by-name/$GALLERY_NAME")
+                            .header("Authorization", "Bearer token"),
+                    )
+                }
+            result.fold(
+                onSuccess = { it.status shouldBe Status.INTERNAL_SERVER_ERROR },
+                onFailure = { },
+            )
+        }
+
+        test("gallery-by-name rejects an absent or incorrect read token before touching the database") {
+            app(
+                Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries/by-name/$GALLERY_NAME"),
+            ).status shouldBe Status.UNAUTHORIZED
+            app(
+                Request(Method.GET, "/api/v1/accounts/$ACCOUNT/galleries/by-name/$GALLERY_NAME")
                     .header("Authorization", "Bearer wrong"),
             ).status shouldBe Status.UNAUTHORIZED
         }
