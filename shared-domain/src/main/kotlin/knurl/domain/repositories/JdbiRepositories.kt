@@ -122,11 +122,21 @@ class AccountRepository(
         }
 }
 
-/** Persistence boundary for standalone ingestion's refreshable Instagram access token. */
+/**
+ * Persistence boundary for standalone ingestion's refreshable Instagram access token.
+ *
+ * `auth_config` has no foreign key to `instagram_accounts` (it's slated to move into its own,
+ * separate database owned by a future credentials broker), so nothing at the database level
+ * cleans up a row when its account is removed. [delete] is that cleanup primitive - callers
+ * implementing account removal are expected to invoke it explicitly, even though no such feature
+ * exists yet.
+ */
 interface AuthConfigStore {
     fun get(accountId: String): AuthConfig?
 
     fun upsert(config: AuthConfig)
+
+    fun delete(accountId: String)
 }
 
 /**
@@ -168,6 +178,15 @@ class AuthConfigRepository(
                         updated_at = EXCLUDED.updated_at
                     """.trimIndent(),
                 ).bindKotlin(toStore)
+                .execute()
+        }
+    }
+
+    override fun delete(accountId: String) {
+        jdbi.useHandle<Exception> { handle ->
+            handle
+                .createUpdate("DELETE FROM auth_config WHERE instagram_account_id = :accountId")
+                .bind("accountId", accountId)
                 .execute()
         }
     }
