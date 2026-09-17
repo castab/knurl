@@ -234,7 +234,7 @@ private suspend fun feedSyncWorkerLoop(
         }
         if (claim.previousClaimedAt != null) {
             log.warn(
-                "Reclaiming abandoned feed sync for account ${claim.accountId} " +
+                "Reclaiming abandoned feed sync for account ${claim.instagramAccountId} " +
                     "(previously claimed at ${claim.previousClaimedAt}) - a previous worker never completed it",
             )
         }
@@ -251,12 +251,12 @@ private suspend fun feedSyncWorkerLoop(
                 mediaProcessor = mediaProcessor,
                 s3Client = s3Client,
                 bucketName = bucketName,
-                targetUserId = claim.accountId,
+                targetUserId = claim.instagramAccountId,
             )
 
         runCatching { syncPipeline.runOnce() }
-            .onSuccess { accountClaimRepository.markSynced(claim.accountId) }
-            .onFailure { log.error("Feed sync failed for account ${claim.accountId}", it) }
+            .onSuccess { accountClaimRepository.markSynced(claim.instagramAccountId) }
+            .onFailure { log.error("Feed sync failed for account ${claim.instagramAccountId}", it) }
         // On failure, sync_claimed_at is deliberately left as-is (stale): the account becomes
         // reclaimable once its lease elapses, with no separate bookkeeping to distinguish a clean
         // failure from a crash.

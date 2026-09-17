@@ -181,7 +181,7 @@ class AuthConfigRepository(
  * operator visibility. Null means this was a fresh, never-claimed-or-cleanly-completed account.
  */
 data class AccountClaim(
-    val accountId: String,
+    val instagramAccountId: String,
     val previousClaimedAt: Instant?,
 )
 
