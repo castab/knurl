@@ -154,27 +154,31 @@ fun main() {
         )
 
         coroutineScope {
-            repeat(config.feedSyncConcurrency) {
-                launch {
-                    feedSyncWorkerLoop(
-                        accountClaimRepository = accountClaimRepository,
-                        postRepository = postRepository,
-                        catalogRepository = catalogRepository,
-                        galleryRepository = galleryRepository,
-                        syncConfigurationRepository = syncConfigurationRepository,
-                        downloadQueueRepository = downloadQueueRepository,
-                        metaGraphClient = metaGraphClient,
-                        mediaProcessor = mediaProcessor,
-                        accessTokenProvider = accessTokenProvider,
-                        s3Client = s3Client,
-                        bucketName = config.s3.bucketName,
-                        intervalSeconds = config.intervalSeconds,
-                        leaseSeconds = config.accountSyncLeaseSeconds,
-                        pollIntervalMs = config.claimPollIntervalMs,
-                        runOnce = config.runOnce,
-                    )
+            // Collected before launching download workers, not just for-loop order: download
+            // workers need every one of these Jobs to know when it's actually safe to treat an
+            // empty queue as "done" under RUN_ONCE - see DownloadWorker.loop's doc comment.
+            val feedSyncJobs =
+                List(config.feedSyncConcurrency) {
+                    launch {
+                        feedSyncWorkerLoop(
+                            accountClaimRepository = accountClaimRepository,
+                            postRepository = postRepository,
+                            catalogRepository = catalogRepository,
+                            galleryRepository = galleryRepository,
+                            syncConfigurationRepository = syncConfigurationRepository,
+                            downloadQueueRepository = downloadQueueRepository,
+                            metaGraphClient = metaGraphClient,
+                            mediaProcessor = mediaProcessor,
+                            accessTokenProvider = accessTokenProvider,
+                            s3Client = s3Client,
+                            bucketName = config.s3.bucketName,
+                            intervalSeconds = config.intervalSeconds,
+                            leaseSeconds = config.accountSyncLeaseSeconds,
+                            pollIntervalMs = config.claimPollIntervalMs,
+                            runOnce = config.runOnce,
+                        )
+                    }
                 }
-            }
             repeat(config.downloadWorkerConcurrency) {
                 launch {
                     downloadWorker.loop(
@@ -182,6 +186,7 @@ fun main() {
                         leaseSeconds = config.downloadClaimLeaseSeconds,
                         pollIntervalMs = config.claimPollIntervalMs,
                         runOnce = config.runOnce,
+                        feedSyncJobs = feedSyncJobs,
                     )
                 }
             }
