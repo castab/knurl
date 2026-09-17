@@ -4,21 +4,27 @@ import com.sksamuel.hoplite.ConfigLoaderBuilder
 import com.sksamuel.hoplite.PropertySource
 import knurl.domain.config.DatabaseConfig
 import knurl.domain.config.S3Settings
+import knurl.domain.repositories.AccountClaimRepository
 import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.AuthConfigRepository
 import knurl.domain.repositories.CatalogRepository
+import knurl.domain.repositories.DownloadQueueRepository
 import knurl.domain.repositories.GalleryRepository
 import knurl.domain.repositories.InstagramPostRepository
 import knurl.domain.repositories.ObjectKeyRepository
 import knurl.domain.repositories.SyncConfigurationRepository
 import knurl.domain.security.CredentialCipher
 import knurl.ingestion.client.MetaGraphClient
+import knurl.ingestion.credentials.InstagramAccessTokenProvider
 import knurl.ingestion.credentials.createInstagramAccessTokenProvider
 import knurl.ingestion.credentials.validateInstagramCredentialSettings
+import knurl.ingestion.pipeline.DownloadWorker
 import knurl.ingestion.pipeline.OrphanSweeper
 import knurl.ingestion.pipeline.SyncPipeline
 import knurl.ingestion.processor.MediaProcessor
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.slf4j.LoggerFactory
@@ -30,20 +36,31 @@ import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.S3Configuration
 import java.io.File
 import java.net.URI
+import java.time.Instant
 import java.util.concurrent.TimeUnit
 
 private val log = LoggerFactory.getLogger("knurl.ingestion.Main")
+
+/** Gates how often [completedDownloadCleanupLoop] actually purges, independent of how often it polls. */
+private const val COMPLETED_DOWNLOAD_CLEANUP_INTERVAL_SECONDS = 3600L
 
 /**
  * Plain `fun main()` entrypoint - no application framework. Everything below is manually
  * constructed and wired by hand.
  *
- * Supports both a persistent-daemon deployment (default: loop on `intervalSeconds`) and a
- * cron-triggered one (`RUN_ONCE=true`: run a single cycle and exit), per the spec's "persistent
- * or cron-triggered background daemon" framing.
+ * Supports both a persistent-daemon deployment (default: each worker loop keeps polling for work)
+ * and a cron-triggered one (`RUN_ONCE=true`: every worker loop drains to "nothing currently
+ * claimable" and exits, then the process exits once all of them have).
  *
  * Architectural boundary: this service owns the database schema (only it calls
  * [DatabaseConfig.runMigrations]) and never opens an HTTP listener / accepts inbound traffic.
+ *
+ * Account-agnostic by design: rather than being pinned to one Instagram account, this process
+ * discovers and processes *any* account registered in `instagram_accounts`, claimed via Postgres
+ * row locking (see [AccountClaimRepository], [DownloadQueueRepository]) so any number of processes
+ * can safely share one database with no double-processing. `INSTAGRAM_BUSINESS_ACCOUNT_ID` and its
+ * companions remain a single-account convenience/bootstrap path - see [InstagramSettings] - not a
+ * restriction on which accounts this process can serve.
  */
 fun main() =
     runBlocking {
@@ -77,7 +94,14 @@ fun main() =
         val galleryRepository = GalleryRepository(jdbi)
         val syncConfigurationRepository = SyncConfigurationRepository(jdbi)
         val objectKeyRepository = ObjectKeyRepository(jdbi)
+        val accountClaimRepository = AccountClaimRepository(jdbi)
+        val downloadQueueRepository = DownloadQueueRepository(jdbi)
 
+        // Registers/seeds exactly the one account from INSTAGRAM_BUSINESS_ACCOUNT_ID et al., unchanged
+        // from standalone Knurl's original single-account shape. This is the single-account convenience/
+        // bootstrap path, not how a multi-account deployment provisions additional accounts - those rows
+        // are inserted directly (see README), and accountClaimRepository/downloadQueueRepository below
+        // pick up any account or item in the database regardless of which process registered it.
         accountRepository.register(config.instagram.businessAccountId, config.instagram.adminToken, config.instagram.readToken)
 
         val okHttpClient =
@@ -100,25 +124,20 @@ fun main() =
                 okHttpClient = okHttpClient,
             )
         val mediaProcessor = MediaProcessor(okHttpClient, s3Client, config.s3.bucketName)
-        val syncPipeline =
-            SyncPipeline(
-                accessTokenProvider = accessTokenProvider,
-                postRepository = postRepository,
-                catalogRepository = catalogRepository,
-                galleryRepository = galleryRepository,
-                syncConfigurationRepository = syncConfigurationRepository,
-                metaGraphClient = metaGraphClient,
-                mediaProcessor = mediaProcessor,
-                s3Client = s3Client,
-                bucketName = config.s3.bucketName,
-                targetUserId = config.instagram.businessAccountId,
-            )
         val orphanSweeper =
             OrphanSweeper(
                 objectKeyRepository = objectKeyRepository,
                 syncConfigurationRepository = syncConfigurationRepository,
                 s3Client = s3Client,
                 bucketName = config.s3.bucketName,
+            )
+        val downloadWorker =
+            DownloadWorker(
+                accessTokenProvider = accessTokenProvider,
+                metaGraphClient = metaGraphClient,
+                mediaProcessor = mediaProcessor,
+                postRepository = postRepository,
+                downloadQueueRepository = downloadQueueRepository,
             )
 
         Runtime.getRuntime().addShutdownHook(
@@ -129,17 +148,155 @@ fun main() =
             },
         )
 
-        log.info("Knurl ingestion-service starting (runOnce=${config.runOnce})")
-        val intervalMs = config.intervalSeconds * 1000
-        while (true) {
-            runCatching { syncPipeline.runOnce() }.onFailure { log.error("Sync cycle failed", it) }
-            // Separate from the sync cycle, and after it: the sweep runs on its own (much longer)
-            // cadence, and a failure to reap orphans must never cost us an ingestion cycle.
-            runCatching { orphanSweeper.sweepIfDue() }.onFailure { log.error("Orphan sweep failed", it) }
-            if (config.runOnce) break
-            delay(intervalMs)
+        log.info(
+            "Knurl ingestion-service starting (runOnce=${config.runOnce}, " +
+                "feedSyncConcurrency=${config.feedSyncConcurrency}, downloadWorkerConcurrency=${config.downloadWorkerConcurrency})",
+        )
+
+        coroutineScope {
+            repeat(config.feedSyncConcurrency) {
+                launch {
+                    feedSyncWorkerLoop(
+                        accountClaimRepository = accountClaimRepository,
+                        postRepository = postRepository,
+                        catalogRepository = catalogRepository,
+                        galleryRepository = galleryRepository,
+                        syncConfigurationRepository = syncConfigurationRepository,
+                        downloadQueueRepository = downloadQueueRepository,
+                        metaGraphClient = metaGraphClient,
+                        mediaProcessor = mediaProcessor,
+                        accessTokenProvider = accessTokenProvider,
+                        s3Client = s3Client,
+                        bucketName = config.s3.bucketName,
+                        intervalSeconds = config.intervalSeconds,
+                        leaseSeconds = config.accountSyncLeaseSeconds,
+                        pollIntervalMs = config.claimPollIntervalMs,
+                        runOnce = config.runOnce,
+                    )
+                }
+            }
+            repeat(config.downloadWorkerConcurrency) {
+                launch {
+                    downloadWorker.loop(
+                        batchSize = config.downloadClaimBatchSize,
+                        leaseSeconds = config.downloadClaimLeaseSeconds,
+                        pollIntervalMs = config.claimPollIntervalMs,
+                        runOnce = config.runOnce,
+                    )
+                }
+            }
+            launch {
+                orphanSweepLoop(orphanSweeper, config.claimPollIntervalMs, config.runOnce)
+            }
+            launch {
+                completedDownloadCleanupLoop(
+                    downloadQueueRepository = downloadQueueRepository,
+                    syncConfigurationRepository = syncConfigurationRepository,
+                    retentionHours = config.completedDownloadRetentionHours,
+                    pollIntervalMs = config.claimPollIntervalMs,
+                    runOnce = config.runOnce,
+                )
+            }
         }
     }
+
+/**
+ * Claims whichever account is due for a feed sync - any account in `instagram_accounts`, not just
+ * the one this process bootstrapped - syncs it with no transaction held across the work, then
+ * marks it synced on success. On failure the claim is simply left stale (see
+ * [AccountClaimRepository]), reclaimable by any worker once its lease elapses; safe to run as
+ * several concurrent coroutines, in this process or several others sharing the same database.
+ */
+private suspend fun feedSyncWorkerLoop(
+    accountClaimRepository: AccountClaimRepository,
+    postRepository: InstagramPostRepository,
+    catalogRepository: CatalogRepository,
+    galleryRepository: GalleryRepository,
+    syncConfigurationRepository: SyncConfigurationRepository,
+    downloadQueueRepository: DownloadQueueRepository,
+    metaGraphClient: MetaGraphClient,
+    mediaProcessor: MediaProcessor,
+    accessTokenProvider: InstagramAccessTokenProvider,
+    s3Client: S3Client,
+    bucketName: String,
+    intervalSeconds: Long,
+    leaseSeconds: Long,
+    pollIntervalMs: Long,
+    runOnce: Boolean,
+) {
+    while (true) {
+        val claim = accountClaimRepository.claimDueAccount(intervalSeconds, leaseSeconds)
+        if (claim == null) {
+            if (runOnce) return
+            delay(pollIntervalMs)
+            continue
+        }
+        if (claim.previousClaimedAt != null) {
+            log.warn(
+                "Reclaiming abandoned feed sync for account ${claim.accountId} " +
+                    "(previously claimed at ${claim.previousClaimedAt}) - a previous worker never completed it",
+            )
+        }
+
+        val syncPipeline =
+            SyncPipeline(
+                accessTokenProvider = accessTokenProvider,
+                postRepository = postRepository,
+                catalogRepository = catalogRepository,
+                galleryRepository = galleryRepository,
+                syncConfigurationRepository = syncConfigurationRepository,
+                downloadQueueRepository = downloadQueueRepository,
+                metaGraphClient = metaGraphClient,
+                mediaProcessor = mediaProcessor,
+                s3Client = s3Client,
+                bucketName = bucketName,
+                targetUserId = claim.accountId,
+            )
+
+        runCatching { syncPipeline.runOnce() }
+            .onSuccess { accountClaimRepository.markSynced(claim.accountId) }
+            .onFailure { log.error("Feed sync failed for account ${claim.accountId}", it) }
+        // On failure, sync_claimed_at is deliberately left as-is (stale): the account becomes
+        // reclaimable once its lease elapses, with no separate bookkeeping to distinguish a clean
+        // failure from a crash.
+    }
+}
+
+private suspend fun orphanSweepLoop(
+    orphanSweeper: OrphanSweeper,
+    pollIntervalMs: Long,
+    runOnce: Boolean,
+) {
+    while (true) {
+        runCatching { orphanSweeper.sweepIfDue() }.onFailure { log.error("Orphan sweep failed", it) }
+        if (runOnce) return
+        delay(pollIntervalMs)
+    }
+}
+
+/** Periodically purges old `COMPLETE` rows from `pending_downloads`, kept until then purely for operator visibility. */
+private suspend fun completedDownloadCleanupLoop(
+    downloadQueueRepository: DownloadQueueRepository,
+    syncConfigurationRepository: SyncConfigurationRepository,
+    retentionHours: Long,
+    pollIntervalMs: Long,
+    runOnce: Boolean,
+) {
+    while (true) {
+        val claimed =
+            syncConfigurationRepository.claimIfElapsed(
+                key = "pending_downloads_cleanup_at",
+                now = Instant.now(),
+                intervalSeconds = COMPLETED_DOWNLOAD_CLEANUP_INTERVAL_SECONDS,
+            )
+        if (claimed) {
+            runCatching { downloadQueueRepository.deleteOldCompleted(retentionHours) }
+                .onFailure { log.error("Completed-download cleanup failed", it) }
+        }
+        if (runOnce) return
+        delay(pollIntervalMs)
+    }
+}
 
 private fun buildS3Client(settings: S3Settings): S3Client {
     val builder =

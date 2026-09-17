@@ -25,29 +25,50 @@ private val TOKEN_REFRESH_THRESHOLD: Duration = Duration.ofHours(24)
 private const val MAX_CREDENTIAL_BYTES = 16 * 1024
 
 /**
- * Supplies the Instagram access token used by one ingestion process. Implementations own the
- * token's storage and refresh lifecycle; callers only consume the currently valid value.
+ * Supplies the Instagram access token for a given account, shared across every account a
+ * process's workers claim - not scoped to one account itself. Implementations own the token's
+ * storage and refresh lifecycle; callers only consume the currently valid value for whichever
+ * [accountId] they're currently working on.
  */
 interface InstagramAccessTokenProvider {
-    suspend fun getAccessToken(): String
+    suspend fun getAccessToken(accountId: String): String
 }
 
-/** Standalone Knurl's existing config-seeded, database-persisted token lifecycle. */
+/**
+ * Standalone Knurl's existing config-seeded, database-persisted token lifecycle, generalized to
+ * serve any account rather than one fixed at construction.
+ *
+ * [seedAccessToken] only ever seeds [seedAccountId] - the one account this process's own
+ * `INSTAGRAM_ACCESS_TOKEN`/`INSTAGRAM_BUSINESS_ACCOUNT_ID` env vars configure (see
+ * [knurl.ingestion.IngestionConfig]; that pair deliberately stays single-account). Any other
+ * account this provider is asked for must already have an `auth_config` row - provisioned
+ * out-of-band, the same way its `instagram_accounts` row was - or [getAccessToken] fails loudly
+ * rather than silently doing nothing, which the caller's per-item error handling then logs and
+ * leaves for a later retry rather than crashing the whole process.
+ */
 class DatabaseInstagramAccessTokenProvider(
     private val authConfigStore: AuthConfigStore,
-    private val accountId: String,
-    private val initialAccessToken: String,
+    private val seedAccountId: String?,
+    private val seedAccessToken: String?,
     private val refreshToken: (String) -> TokenRefreshResult,
     private val clock: Clock = Clock.systemUTC(),
 ) : InstagramAccessTokenProvider {
-    override suspend fun getAccessToken(): String {
+    override suspend fun getAccessToken(accountId: String): String {
         val stored = authConfigStore.get(accountId)
         val now = Instant.now(clock)
         val nearExpiry = stored == null || now.plus(TOKEN_REFRESH_THRESHOLD).isAfter(stored.expiresAt)
 
         if (!nearExpiry) return stored.accessToken
 
-        val refreshed = refreshToken(stored?.accessToken ?: initialAccessToken)
+        val seed =
+            stored?.accessToken
+                ?: seedAccessToken.takeIf { accountId == seedAccountId }
+                ?: error(
+                    "No auth_config row and no seed access token for account $accountId - accounts other " +
+                        "than this process's configured INSTAGRAM_BUSINESS_ACCOUNT_ID must have their " +
+                        "auth_config row provisioned out-of-band before ingestion can sync them",
+                )
+        val refreshed = refreshToken(seed)
         authConfigStore.upsert(
             AuthConfig(
                 instagramAccountId = accountId,
@@ -61,14 +82,19 @@ class DatabaseInstagramAccessTokenProvider(
 }
 
 /**
- * Retrieves a token whose refresh and persistence are owned by an external credential broker.
- * The authenticated job identity is account-scoped, so the request intentionally carries no
- * account id; the returned id is checked against this process's configured account instead.
+ * Retrieves a token whose refresh and persistence are owned by an external credential broker,
+ * for whichever account [getAccessToken] is asked about.
+ *
+ * The broker request now carries an explicit account id per call - a change from standalone
+ * Knurl's original one-account-per-process shape, where the authenticated job identity alone was
+ * enough to imply the account. A broker serving an account-agnostic ingestion deployment must
+ * therefore accept one bearer token authorizing lookups for multiple accounts and dispatch its
+ * response by the requested account id; this is a breaking change to any existing broker
+ * implementation built against the single-account contract.
  */
 class HttpBrokerInstagramAccessTokenProvider(
     private val okHttpClient: OkHttpClient,
     endpointUrl: String,
-    private val expectedAccountId: String,
     private val bearerTokenSource: () -> String,
     allowPlaintextHttp: Boolean,
     private val clock: Clock = Clock.systemUTC(),
@@ -76,12 +102,12 @@ class HttpBrokerInstagramAccessTokenProvider(
     private val endpoint = validateBrokerEndpoint(endpointUrl, allowPlaintextHttp)
     private val json = Json { ignoreUnknownKeys = true }
 
-    override suspend fun getAccessToken(): String {
+    override suspend fun getAccessToken(accountId: String): String {
         val bearerToken = bearerTokenSource().requireValidSecret("bearer token")
         val request =
             Request
                 .Builder()
-                .url(endpoint)
+                .url(endpoint.newBuilder().addQueryParameter("accountId", accountId).build())
                 .header("Authorization", "Bearer $bearerToken")
                 .get()
                 .build()
@@ -108,7 +134,7 @@ class HttpBrokerInstagramAccessTokenProvider(
                 throw CredentialBrokerException("returned malformed JSON")
             }
 
-        if (credential.instagramAccountId != expectedAccountId) {
+        if (credential.instagramAccountId != accountId) {
             throw CredentialBrokerException("returned credentials for an unexpected Instagram account")
         }
         val accessToken = credential.accessToken.validBrokerAccessToken()
@@ -149,8 +175,8 @@ fun createInstagramAccessTokenProvider(
         InstagramCredentialProviderType.DATABASE -> {
             DatabaseInstagramAccessTokenProvider(
                 authConfigStore = authConfigStore,
-                accountId = settings.businessAccountId,
-                initialAccessToken = checkNotNull(settings.accessToken).trim(),
+                seedAccountId = settings.businessAccountId,
+                seedAccessToken = checkNotNull(settings.accessToken).trim(),
                 refreshToken = refreshToken,
                 clock = clock,
             )
@@ -161,7 +187,6 @@ fun createInstagramAccessTokenProvider(
             HttpBrokerInstagramAccessTokenProvider(
                 okHttpClient = okHttpClient,
                 endpointUrl = broker.url.requireNonBlank("Instagram credential broker URL"),
-                expectedAccountId = settings.businessAccountId,
                 bearerTokenSource = createBrokerBearerTokenSource(broker),
                 allowPlaintextHttp = broker.allowPlaintextHttp,
                 clock = clock,

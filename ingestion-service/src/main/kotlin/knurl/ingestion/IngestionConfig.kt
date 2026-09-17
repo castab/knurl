@@ -20,7 +20,22 @@ data class IngestionConfig(
      */
     val credentialEncryptionKey: String,
     val runOnce: Boolean = false,
+    /** How stale an account's `last_synced_at` must be before it's due for another feed sync. */
     val intervalSeconds: Long = 900,
+    /** Concurrent feed-sync worker coroutines, each claiming and syncing one due account at a time. */
+    val feedSyncConcurrency: Int = 1,
+    /** Concurrent download-worker coroutines, each claiming and processing one batch at a time. */
+    val downloadWorkerConcurrency: Int = 1,
+    /** Max items one download worker claims per claim statement. */
+    val downloadClaimBatchSize: Int = 5,
+    /** How long a claimed download is honored before another worker treats it as abandoned. */
+    val downloadClaimLeaseSeconds: Long = 300,
+    /** How long a claimed account's feed sync is honored before another worker treats it as abandoned. */
+    val accountSyncLeaseSeconds: Long = 600,
+    /** How long a completed download's queue row is kept for observability before cleanup purges it. */
+    val completedDownloadRetentionHours: Long = 24,
+    /** Sleep between claim attempts for any worker loop that found nothing to claim. */
+    val claimPollIntervalMs: Long = 5000,
 )
 
 data class InstagramSettings(

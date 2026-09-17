@@ -173,6 +173,214 @@ class AuthConfigRepository(
     }
 }
 
+/**
+ * One account claimed by [AccountClaimRepository.claimDueAccount]. [previousClaimedAt] is the
+ * `sync_claimed_at` value the claimed row had *before* this claim overwrote it - non-null means
+ * this claim retook an abandoned attempt (a previous worker's `sync_claimed_at` went stale without
+ * ever clearing it via [AccountClaimRepository.markSynced]), which callers log at WARN for
+ * operator visibility. Null means this was a fresh, never-claimed-or-cleanly-completed account.
+ */
+data class AccountClaim(
+    val accountId: String,
+    val previousClaimedAt: Instant?,
+)
+
+/**
+ * Account-agnostic feed-sync scheduling: which account is due for a sync, claimed via Postgres row
+ * locking rather than a coroutine semaphore, so any worker in any process can safely claim any due
+ * account with no coordination beyond the database itself.
+ *
+ * Deliberately a fast claim-and-release, not a held transaction: [claimDueAccount] and
+ * [markSynced] are each one short statement, and the actual feed-sync work in between runs with no
+ * transaction open at all. A worker that crashes mid-sync simply leaves `sync_claimed_at` set and
+ * stale - see [AccountClaim] - rather than holding a connection for as long as that sync takes.
+ */
+class AccountClaimRepository(
+    private val jdbi: Jdbi,
+) {
+    /**
+     * Claims exactly one account whose `last_synced_at` is null or older than [intervalSeconds]
+     * and whose `sync_claimed_at` is null or older than [leaseSeconds] (an abandoned claim),
+     * ordered oldest-due-first. Returns null when nothing is currently due.
+     *
+     * `LIMIT 1`, not a batch: a claimed account means running its entire multi-page feed sync, so
+     * concurrency should come from running more independent workers (each claiming one account and
+     * looping) rather than from claiming several accounts into one round trip.
+     */
+    fun claimDueAccount(
+        intervalSeconds: Long,
+        leaseSeconds: Long,
+    ): AccountClaim? =
+        jdbi.withHandle<AccountClaim?, Exception> { handle ->
+            handle
+                .createQuery(
+                    """
+                    WITH claimable AS (
+                        SELECT instagram_account_id, sync_claimed_at
+                        FROM instagram_accounts
+                        WHERE (last_synced_at IS NULL OR last_synced_at <= now() - (:intervalSeconds || ' seconds')::interval)
+                          AND (sync_claimed_at IS NULL OR sync_claimed_at <= now() - (:leaseSeconds || ' seconds')::interval)
+                        ORDER BY last_synced_at ASC NULLS FIRST
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
+                    )
+                    UPDATE instagram_accounts
+                    SET sync_claimed_at = CURRENT_TIMESTAMP
+                    FROM claimable
+                    WHERE instagram_accounts.instagram_account_id = claimable.instagram_account_id
+                    RETURNING instagram_accounts.instagram_account_id, claimable.sync_claimed_at AS previous_claimed_at
+                    """.trimIndent(),
+                ).bind("intervalSeconds", intervalSeconds)
+                .bind("leaseSeconds", leaseSeconds)
+                .mapTo<AccountClaim>()
+                .findFirst()
+                .orElse(null)
+        }
+
+    /** Clears the claim and stamps `last_synced_at`, marking a sync cycle as cleanly completed. */
+    fun markSynced(accountId: String) {
+        jdbi.useHandle<Exception> { handle ->
+            handle
+                .createUpdate(
+                    """
+                    UPDATE instagram_accounts
+                    SET last_synced_at = CURRENT_TIMESTAMP, sync_claimed_at = NULL
+                    WHERE instagram_account_id = :accountId
+                    """.trimIndent(),
+                ).bind("accountId", accountId)
+                .execute()
+        }
+    }
+}
+
+/**
+ * One item claimed by [DownloadQueueRepository.claimBatch]. [previousStatus] is the row's status
+ * *before* this claim overwrote it - `"CLAIMED"` means this claim retook an abandoned attempt
+ * (see [DownloadQueueRepository]'s doc comment), which callers log at WARN; `"UNCLAIMED"` means
+ * this was fresh work.
+ */
+data class PendingDownload(
+    val instagramAccountId: String,
+    val instagramMediaId: String,
+    val previousStatus: String,
+)
+
+/**
+ * Account-agnostic download queue: which catalog items are selected into a gallery and not yet
+ * downloaded, claimed via Postgres row locking so any worker in any process can safely pull work
+ * regardless of which account it belongs to - the credential provider resolves the right token
+ * per claimed item's own `instagramAccountId`.
+ *
+ * Fast claim-and-release, not a held transaction: [claimBatch] and [markComplete] are each one
+ * short statement, and the actual download/optimize/store work in between runs with no
+ * transaction open. A worker that crashes or fails mid-item simply leaves the row `CLAIMED` and
+ * its `claimed_at` stale - the next claim treats that identically to a fresh crash, with no
+ * distinction and no separate reaper process.
+ */
+class DownloadQueueRepository(
+    private val jdbi: Jdbi,
+) {
+    /** Idempotent: called every time [knurl.ingestion.pipeline.SyncPipeline] decides an item should be downloaded. */
+    fun enqueue(
+        accountId: String,
+        mediaId: String,
+    ) {
+        jdbi.useHandle<Exception> { handle ->
+            handle
+                .createUpdate(
+                    """
+                    INSERT INTO pending_downloads (instagram_account_id, instagram_media_id)
+                    VALUES (:accountId, :mediaId)
+                    ON CONFLICT (instagram_account_id, instagram_media_id) DO NOTHING
+                    """.trimIndent(),
+                ).bind("accountId", accountId)
+                .bind("mediaId", mediaId)
+                .execute()
+        }
+    }
+
+    /**
+     * Claims up to [batchSize] items that are `UNCLAIMED`, or `CLAIMED` with a `claimed_at` older
+     * than [leaseSeconds] (abandoned), oldest-enqueued-first. With no lock held across the actual
+     * download, claimed items can be processed concurrently by the caller - unlike the account
+     * claim above, there is no reason to keep this batch small purely for lock-duration reasons.
+     */
+    fun claimBatch(
+        batchSize: Int,
+        leaseSeconds: Long,
+    ): List<PendingDownload> =
+        jdbi.withHandle<List<PendingDownload>, Exception> { handle ->
+            handle
+                .createQuery(
+                    """
+                    WITH claimable AS (
+                        SELECT instagram_account_id, instagram_media_id, status AS previous_status
+                        FROM pending_downloads
+                        WHERE status = 'UNCLAIMED'
+                           OR (status = 'CLAIMED' AND claimed_at <= now() - (:leaseSeconds || ' seconds')::interval)
+                        ORDER BY enqueued_at
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT :batchSize
+                    )
+                    UPDATE pending_downloads
+                    SET status = 'CLAIMED', claimed_at = CURRENT_TIMESTAMP
+                    FROM claimable
+                    WHERE pending_downloads.instagram_account_id = claimable.instagram_account_id
+                      AND pending_downloads.instagram_media_id = claimable.instagram_media_id
+                    RETURNING pending_downloads.instagram_account_id, pending_downloads.instagram_media_id, claimable.previous_status
+                    """.trimIndent(),
+                ).bind("batchSize", batchSize)
+                .bind("leaseSeconds", leaseSeconds)
+                .mapTo<PendingDownload>()
+                .list()
+        }
+
+    fun markComplete(
+        accountId: String,
+        mediaId: String,
+    ) {
+        jdbi.useHandle<Exception> { handle ->
+            handle
+                .createUpdate(
+                    """
+                    UPDATE pending_downloads
+                    SET status = 'COMPLETE', completed_at = CURRENT_TIMESTAMP
+                    WHERE instagram_account_id = :accountId AND instagram_media_id = :mediaId
+                    """.trimIndent(),
+                ).bind("accountId", accountId)
+                .bind("mediaId", mediaId)
+                .execute()
+        }
+    }
+
+    /**
+     * Whether [mediaId] still belongs to at least one gallery - checked right before downloading,
+     * since an item can sit in the queue for an unbounded time between enqueue and claim, and an
+     * admin may have removed it from every gallery in the meantime.
+     */
+    fun isStillInAnyGallery(mediaId: String): Boolean =
+        jdbi.withHandle<Boolean, Exception> { handle ->
+            handle
+                .createQuery("SELECT EXISTS (SELECT 1 FROM gallery_items WHERE instagram_media_id = :mediaId)")
+                .bind("mediaId", mediaId)
+                .mapTo<Boolean>()
+                .one()
+        }
+
+    /** Purges `COMPLETE` rows older than [retentionHours], kept until then purely for operator visibility. */
+    fun deleteOldCompleted(retentionHours: Long): Int =
+        jdbi.withHandle<Int, Exception> { handle ->
+            handle
+                .createUpdate(
+                    """
+                    DELETE FROM pending_downloads
+                    WHERE status = 'COMPLETE' AND completed_at <= now() - (:retentionHours || ' hours')::interval
+                    """.trimIndent(),
+                ).bind("retentionHours", retentionHours)
+                .execute()
+        }
+}
+
 /** One row of `instagram_post_media`, scoped down to just the S3 paths needed for eviction's S3 delete. */
 private data class MediaPathsRow(
     val postId: Uuid,

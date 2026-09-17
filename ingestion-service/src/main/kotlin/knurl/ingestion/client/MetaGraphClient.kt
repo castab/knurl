@@ -109,6 +109,32 @@ class MetaGraphClient(
         return json.decodeFromString(execute(urlBuilder.build()))
     }
 
+    /**
+     * Fetches fresh metadata (including `media_url`/`thumbnail_url`) for a single media item.
+     *
+     * Used by the download queue worker rather than the paginated feed response an item was
+     * originally discovered in, because those CDN URLs are short-lived and never persisted
+     * anywhere - by the time a queued item is claimed, possibly much later, the URLs from its
+     * original feed page may already have expired.
+     */
+    fun fetchMediaItem(
+        mediaId: String,
+        accessToken: String,
+    ): MediaItem {
+        val url =
+            "https://graph.instagram.com/$apiVersion/$mediaId"
+                .toHttpUrl()
+                .newBuilder()
+                .addQueryParameter(
+                    "fields",
+                    "id,media_type,caption,permalink,timestamp,media_url,thumbnail_url,media_product_type," +
+                        "children{media_type,media_url,thumbnail_url}",
+                ).addQueryParameter("access_token", accessToken)
+                .build()
+
+        return json.decodeFromString(execute(url))
+    }
+
     private fun execute(url: okhttp3.HttpUrl): String {
         val request =
             Request
