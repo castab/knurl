@@ -23,15 +23,24 @@ private val NOW: Instant = Instant.parse("2026-09-13T12:00:00Z")
 private val FIXED_CLOCK: Clock = Clock.fixed(NOW, ZoneOffset.UTC)
 
 private class FakeAuthConfigStore(
-    var stored: AuthConfig? = null,
+    initial: AuthConfig? = null,
 ) : AuthConfigStore {
+    private val byAccountId = mutableMapOf<String, AuthConfig>()
     val writes = mutableListOf<AuthConfig>()
 
-    override fun get(accountId: String): AuthConfig? = stored?.takeIf { it.instagramAccountId == accountId }
+    init {
+        initial?.let { byAccountId[it.instagramAccountId] = it }
+    }
+
+    /** Convenience accessor for single-account tests that only ever store one config. */
+    val stored: AuthConfig?
+        get() = byAccountId.values.singleOrNull()
+
+    override fun get(accountId: String): AuthConfig? = byAccountId[accountId]
 
     override fun upsert(config: AuthConfig) {
         writes += config
-        stored = config
+        byAccountId[config.instagramAccountId] = config
     }
 }
 
@@ -50,8 +59,8 @@ class InstagramAccessTokenProvidersTest :
             val provider =
                 DatabaseInstagramAccessTokenProvider(
                     authConfigStore = store,
-                    accountId = "account-1",
-                    initialAccessToken = "initial-token",
+                    seedAccountId = "account-1",
+                    seedAccessToken = "initial-token",
                     refreshToken = {
                         refreshCount++
                         TokenRefreshResult("unexpected", NOW.plusSeconds(100_000))
@@ -59,7 +68,7 @@ class InstagramAccessTokenProvidersTest :
                     clock = FIXED_CLOCK,
                 )
 
-            provider.getAccessToken() shouldBe "stored-token"
+            provider.getAccessToken("account-1") shouldBe "stored-token"
             refreshCount shouldBe 0
             store.writes shouldContainExactly emptyList()
         }
@@ -78,7 +87,7 @@ class InstagramAccessTokenProvidersTest :
                     FIXED_CLOCK,
                 )
 
-            provider.getAccessToken() shouldBe "stored-token"
+            provider.getAccessToken("account-1") shouldBe "stored-token"
         }
 
         test("database provider refreshes from the configured seed when no stored token exists") {
@@ -97,7 +106,7 @@ class InstagramAccessTokenProvidersTest :
                     FIXED_CLOCK,
                 )
 
-            provider.getAccessToken() shouldBe "refreshed-token"
+            provider.getAccessToken("account-1") shouldBe "refreshed-token"
             refreshedFrom shouldBe "initial-token"
             store.writes.shouldContainExactly(
                 AuthConfig("account-1", "refreshed-token", refreshedExpiry, NOW),
@@ -122,7 +131,7 @@ class InstagramAccessTokenProvidersTest :
                     FIXED_CLOCK,
                 )
 
-            provider.getAccessToken() shouldBe "refreshed-token"
+            provider.getAccessToken("account-1") shouldBe "refreshed-token"
             refreshedFrom shouldBe "stored-token"
         }
 
@@ -138,9 +147,41 @@ class InstagramAccessTokenProvidersTest :
                     FIXED_CLOCK,
                 )
 
-            shouldThrow<IllegalStateException> { provider.getAccessToken() }
+            shouldThrow<IllegalStateException> { provider.getAccessToken("account-1") }
             store.stored shouldBe original
             store.writes shouldContainExactly emptyList()
+        }
+
+        test("database provider resolves a second account independently via its own auth_config row") {
+            val store =
+                FakeAuthConfigStore(
+                    AuthConfig("account-1", "account-1-token", NOW.plusSeconds(25 * 60 * 60), NOW),
+                )
+            store.upsert(AuthConfig("account-2", "account-2-token", NOW.plusSeconds(25 * 60 * 60), NOW))
+            val provider =
+                DatabaseInstagramAccessTokenProvider(
+                    store,
+                    seedAccountId = "account-1",
+                    seedAccessToken = "initial-token",
+                    refreshToken = { error("must not refresh - both tokens are unexpired") },
+                    clock = FIXED_CLOCK,
+                )
+
+            provider.getAccessToken("account-1") shouldBe "account-1-token"
+            provider.getAccessToken("account-2") shouldBe "account-2-token"
+        }
+
+        test("database provider fails clearly for an account with no auth_config row and no matching seed") {
+            val provider =
+                DatabaseInstagramAccessTokenProvider(
+                    FakeAuthConfigStore(),
+                    seedAccountId = "account-1",
+                    seedAccessToken = "initial-token",
+                    refreshToken = { error("must not refresh") },
+                    clock = FIXED_CLOCK,
+                )
+
+            shouldThrow<IllegalStateException> { provider.getAccessToken("account-2") }
         }
 
         test("broker provider sends its job credential and returns an account-bound token") {
@@ -148,11 +189,25 @@ class InstagramAccessTokenProvidersTest :
                 server.enqueue(validBrokerResponse())
                 val provider = brokerProvider(server, bearerTokenSource = { "job-token" })
 
-                provider.getAccessToken() shouldBe "instagram-token"
+                provider.getAccessToken("account-1") shouldBe "instagram-token"
                 val request = server.takeRequest()
                 request.method shouldBe "GET"
-                request.path shouldBe "/internal/v1/instagram/access-token"
+                request.path shouldBe "/internal/v1/instagram/access-token?accountId=account-1"
                 request.getHeader("Authorization") shouldBe "Bearer job-token"
+            }
+        }
+
+        test("broker provider requests a second account independently with the same bearer token") {
+            withBrokerServer { server ->
+                server.enqueue(validBrokerResponse())
+                server.enqueue(validBrokerResponse(accountId = "account-2"))
+                val provider = brokerProvider(server, bearerTokenSource = { "job-token" })
+
+                provider.getAccessToken("account-1") shouldBe "instagram-token"
+                provider.getAccessToken("account-2") shouldBe "instagram-token"
+
+                server.takeRequest().path shouldBe "/internal/v1/instagram/access-token?accountId=account-1"
+                server.takeRequest().path shouldBe "/internal/v1/instagram/access-token?accountId=account-2"
             }
         }
 
@@ -169,9 +224,9 @@ class InstagramAccessTokenProvidersTest :
                     server.enqueue(validBrokerResponse())
                     val provider = brokerProvider(server, bearerTokenSource = source)
 
-                    provider.getAccessToken()
+                    provider.getAccessToken("account-1")
                     Files.writeString(tokenFile, "second-job-token\n")
-                    provider.getAccessToken()
+                    provider.getAccessToken("account-1")
 
                     server.takeRequest().getHeader("Authorization") shouldBe "Bearer first-job-token"
                     server.takeRequest().getHeader("Authorization") shouldBe "Bearer second-job-token"
@@ -186,7 +241,7 @@ class InstagramAccessTokenProvidersTest :
                 server.enqueue(validBrokerResponse(accountId = "account-2"))
                 val exception =
                     shouldThrow<CredentialBrokerException> {
-                        brokerProvider(server).getAccessToken()
+                        brokerProvider(server).getAccessToken("account-1")
                     }
 
                 exception.message shouldBe "Credential broker returned credentials for an unexpected Instagram account"
@@ -198,7 +253,7 @@ class InstagramAccessTokenProvidersTest :
                 server.enqueue(validBrokerResponse(expiresAt = NOW.plusSeconds(24 * 60 * 60).toString()))
 
                 shouldThrow<CredentialBrokerException> {
-                    brokerProvider(server).getAccessToken()
+                    brokerProvider(server).getAccessToken("account-1")
                 }.message shouldBe "Credential broker returned a token expiring within 24 hours"
             }
         }
@@ -209,7 +264,7 @@ class InstagramAccessTokenProvidersTest :
 
                 val exception =
                     shouldThrow<CredentialBrokerException> {
-                        brokerProvider(server).getAccessToken()
+                        brokerProvider(server).getAccessToken("account-1")
                     }
                 exception.message shouldBe "Credential broker returned HTTP 401"
                 exception.toString() shouldNotContain "secret-response-body"
@@ -222,7 +277,7 @@ class InstagramAccessTokenProvidersTest :
 
                 val exception =
                     shouldThrow<CredentialBrokerException> {
-                        brokerProvider(server).getAccessToken()
+                        brokerProvider(server).getAccessToken("account-1")
                     }
                 exception.message shouldBe "Credential broker returned malformed JSON"
                 exception.toString() shouldNotContain "secret-instagram-token"
@@ -234,7 +289,7 @@ class InstagramAccessTokenProvidersTest :
                 server.enqueue(MockResponse().setBody("x".repeat(16 * 1024 + 1)))
 
                 shouldThrow<CredentialBrokerException> {
-                    brokerProvider(server).getAccessToken()
+                    brokerProvider(server).getAccessToken("account-1")
                 }.message shouldBe "Credential broker response exceeded 16 KiB"
             }
         }
@@ -244,7 +299,6 @@ class InstagramAccessTokenProvidersTest :
                 HttpBrokerInstagramAccessTokenProvider(
                     OkHttpClient(),
                     "http://broker.internal/internal/v1/instagram/access-token",
-                    "account-1",
                     { "job-token" },
                     allowPlaintextHttp = false,
                     clock = FIXED_CLOCK,
@@ -255,7 +309,6 @@ class InstagramAccessTokenProvidersTest :
                 HttpBrokerInstagramAccessTokenProvider(
                     OkHttpClient(),
                     "http://broker.internal/internal/v1/instagram/access-token",
-                    "account-1",
                     { "job-token" },
                     allowPlaintextHttp = true,
                     clock = FIXED_CLOCK,
@@ -266,7 +319,6 @@ class InstagramAccessTokenProvidersTest :
                 HttpBrokerInstagramAccessTokenProvider(
                     OkHttpClient(),
                     "http://localhost:8080/internal/v1/instagram/access-token",
-                    "account-1",
                     { "job-token" },
                     allowPlaintextHttp = false,
                     clock = FIXED_CLOCK,
@@ -381,7 +433,6 @@ private fun brokerProvider(
     HttpBrokerInstagramAccessTokenProvider(
         okHttpClient = OkHttpClient(),
         endpointUrl = server.url("/internal/v1/instagram/access-token").toString(),
-        expectedAccountId = "account-1",
         bearerTokenSource = bearerTokenSource,
         allowPlaintextHttp = true,
         clock = FIXED_CLOCK,

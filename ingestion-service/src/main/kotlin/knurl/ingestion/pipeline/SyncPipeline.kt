@@ -2,9 +2,8 @@ package knurl.ingestion.pipeline
 
 import knurl.domain.models.CatalogUpsert
 import knurl.domain.models.EvictionCandidate
-import knurl.domain.models.InstagramPostUpsert
-import knurl.domain.models.PostMediaItemUpsert
 import knurl.domain.repositories.CatalogRepository
+import knurl.domain.repositories.DownloadQueueRepository
 import knurl.domain.repositories.GalleryRepository
 import knurl.domain.repositories.InstagramPostRepository
 import knurl.domain.repositories.SyncConfigurationRepository
@@ -43,7 +42,7 @@ private val SHORTCODE_PATTERN = Regex("""instagram\.com/(?:p|reel)/([A-Za-z0-9_-
  * colon, which `OffsetDateTime.parse(CharSequence)`'s default ISO_OFFSET_DATE_TIME formatter
  * rejects (it requires `+00:00` or `Z`).
  */
-private val INSTAGRAM_TIMESTAMP_FORMATTER =
+internal val INSTAGRAM_TIMESTAMP_FORMATTER =
     DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssZ", java.util.Locale.ROOT)
 
 fun extractShortcode(url: String): String? = SHORTCODE_PATTERN.find(url)?.groupValues?.get(1)
@@ -186,12 +185,14 @@ fun thumbnailSourceUrl(item: MediaItem): String? {
 }
 
 /**
- * Orchestrates one ingestion cycle: obtain a valid Graph API token from the configured credential
- * provider, sync the account's entire media feed into the catalog (metadata only) while additionally downloading and
- * storing any catalog item that belongs to a gallery and is not yet in `instagram_posts`, remove
- * any catalog entry (and downloaded post) for media Instagram's feed no longer returned this cycle,
- * then run the retention sweep that deletes the media of items deselected longer ago than
- * `retention_days` (or explicitly purge-requested by an admin).
+ * Orchestrates one ingestion cycle for one account: obtain a valid Graph API token from the
+ * configured credential provider, sync the account's entire media feed into the catalog (metadata
+ * only) while additionally enqueueing any catalog item that belongs to a gallery and is not yet
+ * in `instagram_posts` for the account-agnostic download queue (see
+ * [knurl.ingestion.pipeline.DownloadWorker]) to actually fetch and store, remove any catalog entry
+ * (and downloaded post) for media Instagram's feed no longer returned this cycle, then run the
+ * retention sweep that deletes the media of items deselected longer ago than `retention_days` (or
+ * explicitly purge-requested by an admin).
  *
  * Every paginated feed item is upserted into `instagram_media_catalog` unconditionally, regardless
  * of selection state - this is what powers the admin browse-and-select API in presentation-service.
@@ -202,6 +203,10 @@ fun thumbnailSourceUrl(item: MediaItem): String? {
  * fires when Instagram itself is the one saying an item no longer exists, so unlike deselection
  * there is no grace period, no reselect race, and no respect for `is_pinned` - none of that matters
  * once the source of truth no longer serves the media at all.
+ *
+ * One instance is constructed fresh per claimed account per cycle (cheap - this constructor does
+ * no I/O) by the account-claim worker loop in `Main.kt`, rather than being a long-lived,
+ * one-per-process object the way it was when each process was pinned to exactly one account.
  */
 class SyncPipeline(
     private val accessTokenProvider: InstagramAccessTokenProvider,
@@ -209,6 +214,7 @@ class SyncPipeline(
     private val catalogRepository: CatalogRepository,
     private val galleryRepository: GalleryRepository,
     private val syncConfigurationRepository: SyncConfigurationRepository,
+    private val downloadQueueRepository: DownloadQueueRepository,
     private val metaGraphClient: MetaGraphClient,
     private val mediaProcessor: MediaProcessor,
     private val s3Client: S3Client,
@@ -218,7 +224,7 @@ class SyncPipeline(
     private val log = LoggerFactory.getLogger(SyncPipeline::class.java)
 
     suspend fun runOnce() {
-        val accessToken = accessTokenProvider.getAccessToken()
+        val accessToken = accessTokenProvider.getAccessToken(targetUserId)
         val presentMediaIds = syncCatalogAndSelectedMedia(accessToken)
         removeVanishedMedia(presentMediaIds)
         runEviction()
@@ -284,7 +290,7 @@ class SyncPipeline(
         catalogRepository.updateThumbnailPath(item.id, key)
     }
 
-    /** Upserts catalog metadata unconditionally, then downloads/stores the media if a gallery holds it and it isn't already synced. */
+    /** Upserts catalog metadata unconditionally, then enqueues the media for download if a gallery holds it and it isn't already synced. */
     private fun syncCatalogEntry(
         item: MediaItem,
         galleryMemberIds: Set<String>,
@@ -319,117 +325,8 @@ class SyncPipeline(
         )
 
         if (shouldDownload(item.id, galleryMemberIds, existingIds)) {
-            runCatching { processAndStore(item) }
-                .onFailure { log.error("Failed to process media ${item.id}", it) }
+            downloadQueueRepository.enqueue(targetUserId, item.id)
         }
-    }
-
-    private fun processAndStore(item: MediaItem) {
-        val hasNoChildren =
-            item.children
-                ?.data
-                .orEmpty()
-                .isEmpty()
-        if (item.mediaType == "CAROUSEL_ALBUM" && hasNoChildren) {
-            log.warn("CAROUSEL_ALBUM media ${item.id} had no children; falling back to its own media_url")
-        }
-
-        val children = resolveChildren(item)
-        val notReady =
-            children.firstOrNull { child ->
-                child.mediaUrl == null || (child.mediaType == "VIDEO" && child.thumbnailUrl == null)
-            }
-        if (notReady != null) {
-            if (notDigestibleReason(item) == NOT_DIGESTIBLE_REASON_COPYRIGHT) {
-                log.warn(
-                    "Media ${item.id} (${item.mediaProductType ?: item.mediaType}) still missing " +
-                        "media_url/thumbnail_url for child ${notReady.id} - Instagram permanently omits this field " +
-                        "for media flagged with copyrighted audio (common on Reels); already marked not-digestible " +
-                        "in the catalog, skipping",
-                )
-            } else {
-                log.warn(
-                    "Media ${item.id} not ready yet (child ${notReady.id} missing media_url/thumbnail_url) - " +
-                        "Instagram may still be processing it; will retry on the next sync cycle",
-                )
-            }
-            return
-        }
-
-        val mediaItems =
-            children.mapIndexed { position, child ->
-                val keyPrefix = "posts/${item.id}/$position"
-
-                if (child.mediaType == "VIDEO") {
-                    val videoKey = "$keyPrefix/original"
-                    val video =
-                        mediaProcessor.processVideoPassthrough(
-                            requireNotNull(child.mediaUrl) {
-                                "VIDEO child ${child.id} of media ${item.id} missing media_url"
-                            },
-                            videoKey,
-                        )
-                    val thumbnails =
-                        mediaProcessor.processThumbnail(
-                            requireNotNull(child.thumbnailUrl) {
-                                "VIDEO child ${child.id} of media ${item.id} missing thumbnail_url"
-                            },
-                            keyPrefix,
-                        )
-
-                    PostMediaItemUpsert(
-                        position = position,
-                        mediaType = child.mediaType,
-                        smallPath = thumbnails.small.key,
-                        smallFileSizeBytes = thumbnails.small.fileSizeBytes,
-                        smallWidth = thumbnails.small.width,
-                        smallHeight = thumbnails.small.height,
-                        largePath = thumbnails.large.key,
-                        largeFileSizeBytes = thumbnails.large.fileSizeBytes,
-                        largeWidth = thumbnails.large.width,
-                        largeHeight = thumbnails.large.height,
-                        videoPath = video.key,
-                        videoFileSizeBytes = video.fileSizeBytes,
-                        videoWidth = video.width,
-                        videoHeight = video.height,
-                    )
-                } else {
-                    val images =
-                        mediaProcessor.processImage(
-                            requireNotNull(child.mediaUrl) { "IMAGE child ${child.id} of media ${item.id} missing media_url" },
-                            keyPrefix,
-                        )
-
-                    PostMediaItemUpsert(
-                        position = position,
-                        mediaType = child.mediaType,
-                        smallPath = images.small.key,
-                        smallFileSizeBytes = images.small.fileSizeBytes,
-                        smallWidth = images.small.width,
-                        smallHeight = images.small.height,
-                        largePath = images.large.key,
-                        largeFileSizeBytes = images.large.fileSizeBytes,
-                        largeWidth = images.large.width,
-                        largeHeight = images.large.height,
-                        videoPath = null,
-                        videoFileSizeBytes = null,
-                        videoWidth = null,
-                        videoHeight = null,
-                    )
-                }
-            }
-
-        postRepository.upsert(
-            InstagramPostUpsert(
-                instagramAccountId = targetUserId,
-                instagramMediaId = item.id,
-                mediaType = item.mediaType,
-                caption = item.caption,
-                permalink = item.permalink,
-                timestamp = OffsetDateTime.parse(item.timestamp, INSTAGRAM_TIMESTAMP_FORMATTER).toInstant(),
-                mediaItems = mediaItems,
-            ),
-        )
     }
 
     /**

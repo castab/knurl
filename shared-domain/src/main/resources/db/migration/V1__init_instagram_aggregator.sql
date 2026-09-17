@@ -14,10 +14,19 @@
 -- database read alone (backup, replica, log, compromised ops account) must not yield a working
 -- credential. AccountRepository.verifyAdminToken/verifyReadToken re-hash the candidate and
 -- compare digests; the plaintext never needs to round-trip back out, so a one-way hash is enough.
+-- last_synced_at/sync_claimed_at drive ingestion-service's account-agnostic feed-sync claim: any
+-- worker, in any process, claims whichever account is due (last_synced_at NULL or stale) and not
+-- currently claimed (sync_claimed_at NULL or stale) via `UPDATE ... FOR UPDATE SKIP LOCKED`, syncs
+-- it with no transaction held across the actual work, then clears sync_claimed_at and stamps
+-- last_synced_at on success. A crashed or failed attempt simply leaves sync_claimed_at set and
+-- stale - the same claim query treats that as abandoned and retakes it once its lease elapses, so
+-- there is no separate reaper process and no distinction between "failed" and "crashed".
 CREATE TABLE instagram_accounts (
     instagram_account_id VARCHAR(100) PRIMARY KEY,
     admin_token_hash TEXT NOT NULL,
     read_token_hash TEXT NOT NULL,
+    last_synced_at TIMESTAMP WITH TIME ZONE,
+    sync_claimed_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -136,6 +145,38 @@ CREATE TABLE instagram_media_catalog (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 3a. Pending Downloads Queue
+-- Durable work queue for "this catalog item is selected into a gallery and has no downloaded
+-- media yet" - the account-agnostic replacement for ingestion-service downloading inline during
+-- its feed-sync pass. Carries identity only, no payload: Instagram's media_url/thumbnail_url are
+-- short-lived CDN links that are never persisted anywhere in this schema, so a queued item's fresh
+-- URLs are re-fetched from the Graph API at claim time, immediately before downloading, precisely
+-- so an arbitrarily old backlog entry never causes a stale-URL failure.
+--
+-- status/claimed_at is the same claim-and-release, lease-based pattern as instagram_accounts'
+-- sync_claimed_at above, made an explicit three-value status here because a download is a
+-- one-shot job that reaches a genuine terminal state (COMPLETE), unlike an account, which cycles
+-- back to due again. claimed_at is only meaningful while status = 'CLAIMED'; a failed attempt
+-- leaves both status and claimed_at untouched, and the claim query below treats a CLAIMED row
+-- whose claimed_at has passed the lease duration as abandoned and reclaims it - indistinguishably
+-- whether the previous worker failed cleanly or crashed outright.
+--
+-- Composite (instagram_account_id, instagram_media_id) primary key rather than a surrogate id:
+-- nothing else references this row by id, the natural key is already exactly what the enqueue-time
+-- ON CONFLICT DO NOTHING dedup and the claim/complete statements need, and it keeps "mark complete
+-- on success, leave alone on failure" a one-statement operation with no id indirection.
+CREATE TABLE pending_downloads (
+    instagram_account_id VARCHAR(100) NOT NULL REFERENCES instagram_accounts (instagram_account_id),
+    instagram_media_id VARCHAR(100) NOT NULL
+        REFERENCES instagram_media_catalog (instagram_media_id) ON DELETE CASCADE,
+    status VARCHAR(20) NOT NULL DEFAULT 'UNCLAIMED'
+        CHECK (status IN ('UNCLAIMED', 'CLAIMED', 'COMPLETE')),
+    enqueued_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    claimed_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    PRIMARY KEY (instagram_account_id, instagram_media_id)
+);
+
 -- 3b. Galleries
 -- An account curates any number of named galleries over the same catalog, so one piece of content
 -- can appear in several at once. `id` is the immutable identity - it is what public URLs are built
@@ -238,3 +279,15 @@ CREATE INDEX idx_catalog_deselected_at ON instagram_media_catalog (deselected_at
 CREATE INDEX idx_catalog_purge_requested ON instagram_media_catalog (purge_requested_at) WHERE purge_requested_at IS NOT NULL;
 CREATE INDEX idx_catalog_account_timestamp ON instagram_media_catalog (instagram_account_id, timestamp DESC, instagram_media_id);
 CREATE INDEX idx_catalog_needs_thumbnail ON instagram_media_catalog (instagram_account_id) WHERE thumbnail_path IS NULL;
+
+-- Serves the download claim's "unclaimed or stale-claimed, oldest first" scan without a full-table
+-- sort; status is low-cardinality but still worth leading the index since the claim query always
+-- filters on it first.
+CREATE INDEX idx_pending_downloads_claimable ON pending_downloads (status, enqueued_at);
+
+-- Serves the completed-download cleanup sweep's "old COMPLETE rows" scan.
+CREATE INDEX idx_pending_downloads_completed_at ON pending_downloads (completed_at) WHERE status = 'COMPLETE';
+
+-- Serves the feed-sync claim's "which accounts are due" scan, including NULL-first ordering for
+-- never-synced accounts.
+CREATE INDEX idx_accounts_last_synced_at ON instagram_accounts (last_synced_at);
