@@ -10,12 +10,29 @@ import knurl.ingestion.client.MetaGraphClient
 import knurl.ingestion.credentials.InstagramAccessTokenProvider
 import knurl.ingestion.processor.MediaProcessor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import org.slf4j.LoggerFactory
 import java.time.OffsetDateTime
+
+/**
+ * Whether [DownloadWorker.loop] should stop polling and return rather than sleep and retry.
+ *
+ * Only true once *both* halves hold: this poll found nothing to claim, and every feed-sync job
+ * has completed. The second half is the one easy to get wrong by inlining - see [DownloadWorker.loop]'s
+ * doc comment for the exact race an `if (runOnce) return` on an empty claim alone reintroduces:
+ * an empty queue on an early poll does not mean there is nothing left to do while a feed-sync
+ * worker is still mid-pagination and hasn't enqueued anything yet. Pure/no I/O so it's
+ * unit-testable on its own, the same reason [shouldDownload] and [shouldSkipVanishedRemoval] are.
+ */
+fun shouldStopPolling(
+    runOnce: Boolean,
+    claimedNothing: Boolean,
+    feedSyncJobs: List<Job>,
+): Boolean = runOnce && claimedNothing && feedSyncJobs.all { it.isCompleted }
 
 /**
  * Claims and processes items from the account-agnostic `pending_downloads` queue - any account,
@@ -43,17 +60,29 @@ class DownloadWorker(
      * Claims and processes batches until nothing is left to claim; with [runOnce] false, sleeps
      * [pollIntervalMs] and retries instead of returning. Safe to run as several concurrent
      * coroutines, in this process or several others sharing the same database.
+     *
+     * [feedSyncJobs] matters only when [runOnce] is true: this loop and the feed-sync worker
+     * loops all start concurrently, so an empty queue on this loop's very first check does *not*
+     * mean there is nothing left to do - a feed-sync worker may simply not have paginated far
+     * enough yet to have enqueued anything. Returning immediately in that case would exit this
+     * coroutine for good while feed-sync workers are still enqueueing items minutes later, with no
+     * download worker left alive to claim them (a real bug this loop used to have: a `RUN_ONCE`
+     * run would exit cleanly having stored nothing at all). So while any feed-sync job is still
+     * running, an empty claim just means "poll again shortly", exactly like the non-`runOnce`
+     * case; only once every feed-sync job has completed - guaranteeing no more items can be
+     * enqueued - does an empty claim mean this loop is actually done.
      */
     suspend fun loop(
         batchSize: Int,
         leaseSeconds: Long,
         pollIntervalMs: Long,
         runOnce: Boolean,
+        feedSyncJobs: List<Job> = emptyList(),
     ) {
         while (true) {
             val claimed = downloadQueueRepository.claimBatch(batchSize, leaseSeconds)
             if (claimed.isEmpty()) {
-                if (runOnce) return
+                if (shouldStopPolling(runOnce, claimedNothing = true, feedSyncJobs)) return
                 delay(pollIntervalMs)
                 continue
             }
