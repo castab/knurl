@@ -62,7 +62,7 @@ private const val COMPLETED_DOWNLOAD_CLEANUP_INTERVAL_SECONDS = 3600L
  * companions remain a single-account convenience/bootstrap path - see [InstagramSettings] - not a
  * restriction on which accounts this process can serve.
  */
-fun main() =
+fun main() {
     runBlocking {
         val config =
             ConfigLoaderBuilder
@@ -199,6 +199,7 @@ fun main() =
             }
         }
     }
+}
 
 /**
  * Claims whichever account is due for a feed sync - any account in `instagram_accounts`, not just
