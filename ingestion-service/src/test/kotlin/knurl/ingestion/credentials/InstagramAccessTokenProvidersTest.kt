@@ -42,6 +42,10 @@ private class FakeAuthConfigStore(
         writes += config
         byAccountId[config.instagramAccountId] = config
     }
+
+    override fun delete(accountId: String) {
+        byAccountId.remove(accountId)
+    }
 }
 
 class InstagramAccessTokenProvidersTest :

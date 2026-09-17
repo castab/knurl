@@ -35,8 +35,16 @@ CREATE TABLE instagram_accounts (
 -- CredentialCipher (keyed by CREDENTIAL_ENCRYPTION_KEY, configured independently of the
 -- database), not hashed like admin_token_hash above - ingestion-service must recover it in full
 -- to replay it to Meta's Graph API on every sync cycle, which a one-way hash can't support.
+--
+-- instagram_account_id is intentionally NOT a foreign key into instagram_accounts: this table is
+-- slated to move into its own database, owned by a future credentials broker service, isolated
+-- from the catalog data instagram_accounts anchors. A same-database foreign key can't survive
+-- that split, so it's never introduced here. Referential integrity for this relationship is the
+-- consuming code's responsibility instead - see AuthConfigStore.delete and its doc comment. A
+-- stray auth_config row for a deleted account is inert (nothing will ever request its token
+-- again), so this is a deliberate, low-risk trade rather than a stopgap.
 CREATE TABLE auth_config (
-    instagram_account_id VARCHAR(100) PRIMARY KEY REFERENCES instagram_accounts (instagram_account_id),
+    instagram_account_id VARCHAR(100) PRIMARY KEY,
     access_token_encrypted TEXT NOT NULL,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
