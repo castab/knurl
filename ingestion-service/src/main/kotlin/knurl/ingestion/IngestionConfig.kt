@@ -1,5 +1,6 @@
 package knurl.ingestion
 
+import knurl.domain.config.CredentialsMode
 import knurl.domain.config.CredentialsSettings
 import knurl.domain.config.DatabaseSettings
 import knurl.domain.config.S3Settings
@@ -25,8 +26,12 @@ data class IngestionConfig(
      * error rather than silently recovering. Delete the account's `auth_config` row (or set
      * `INSTAGRAM_ACCESS_TOKEN` fresh, which `DatabaseInstagramAccessTokenProvider` falls back to
      * only when no row exists) after rotating this key.
+     *
+     * Null is legitimate under [CredentialsMode.HTTP]: the control plane owns the token, ingestion
+     * never writes `auth_config`, and no cipher is ever constructed - so requiring a key there would
+     * demand a secret that provably cannot be used. Required under `LOCAL`, enforced below.
      */
-    val credentialEncryptionKey: String,
+    val credentialEncryptionKey: String? = null,
     val runOnce: Boolean = false,
     /** How stale an account's `last_synced_at` must be before it's due for another feed sync. */
     val intervalSeconds: Long = 900,
@@ -44,7 +49,20 @@ data class IngestionConfig(
     val completedDownloadRetentionHours: Long = 24,
     /** Sleep between claim attempts for any worker loop that found nothing to claim. */
     val claimPollIntervalMs: Long = 5000,
-)
+) {
+    init {
+        // Mirrors INSTAGRAM_ACCESS_TOKEN's LOCAL-only requirement (validateCredentialsSettings).
+        // Checked here rather than in that free function because this is storage-at-rest config, not
+        // a credential *source*: it fires at loadConfigOrThrow, before the datasource opens. Blank
+        // matters as much as null - an unset ${?VAR} can arrive as "" through an override layer.
+        if (credentials.mode == CredentialsMode.LOCAL) {
+            require(!credentialEncryptionKey.isNullOrBlank()) {
+                "CREDENTIALS_MODE=LOCAL requires CREDENTIAL_ENCRYPTION_KEY (base64 AES-256 key; " +
+                    "generate one with CredentialCipher.generateKey())"
+            }
+        }
+    }
+}
 
 data class InstagramSettings(
     /** Seeds `LOCAL` credential mode for [businessAccountId] only; unused and rejected in `HTTP`. */

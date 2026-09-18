@@ -2,11 +2,13 @@ package knurl.ingestion
 
 import com.sksamuel.hoplite.ConfigLoaderBuilder
 import com.sksamuel.hoplite.PropertySource
+import knurl.domain.config.CredentialsMode
 import knurl.domain.config.DatabaseConfig
 import knurl.domain.config.S3Settings
 import knurl.domain.repositories.AccountClaimRepository
 import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.AuthConfigRepository
+import knurl.domain.repositories.AuthConfigStore
 import knurl.domain.repositories.CatalogRepository
 import knurl.domain.repositories.DownloadQueueRepository
 import knurl.domain.repositories.GalleryRepository
@@ -71,24 +73,48 @@ fun main() {
                 // first so that a deployed environment's real env vars (resolved into it by typesafe-config's
                 // ${?VAR} substitution) outrank the dev defaults below. When a ${?VAR} is unset the key is
                 // dropped from this source entirely, so local development still falls through to the two
-                // local files. Do not reorder these lines.
+                // files below. Do not reorder these lines.
+                //
+                // `application.conf` is the ONLY config file packaged into the jar/image. Both files below
+                // are read from disk, relative to the Gradle `run` task's working directory
+                // (`ingestion-service/`), so neither can follow the artifact into a deployment and silently
+                // backfill a value the environment was supposed to supply. That is what makes the fail-fast
+                // this file's header promises actually hold once deployed.
                 .addPropertySource(PropertySource.resource("/application.conf"))
-                // Loaded from disk, NOT the classpath: this file holds real Instagram credentials and must
-                // never be packaged into the jar/image. Resolved relative to the Gradle `run` task's working
-                // directory, which is `ingestion-service/`.
+                // Real Instagram credentials - gitignored, never committed.
                 .addPropertySource(PropertySource.file(File("config/application-instagram.conf"), optional = true))
-                .addPropertySource(PropertySource.resource("/application-local.conf", optional = true))
+                // Dev-only defaults matching docker-compose.yml - tracked in git, not secret.
+                .addPropertySource(PropertySource.file(File("config/application-local.conf"), optional = true))
                 .build()
                 .loadConfigOrThrow<IngestionConfig>()
 
         validateCredentialsSettings(config.instagram, config.credentials)
+
+        // Warned rather than rejected: a key here is harmless, just pointless, and an operator
+        // migrating a LOCAL deployment to HTTP should be told their key is now doing nothing rather
+        // than have the migration fail. Emitted before the datasource opens so it still prints if
+        // the database is unreachable.
+        if (config.credentials.mode == CredentialsMode.HTTP && !config.credentialEncryptionKey.isNullOrBlank()) {
+            log.warn(
+                "CREDENTIALS_MODE=HTTP ignores CREDENTIAL_ENCRYPTION_KEY: the control plane owns the " +
+                    "Instagram token and this service never reads or writes auth_config",
+            )
+        }
 
         val dataSource = DatabaseConfig.createDataSource(config.database)
         DatabaseConfig.runMigrations(dataSource)
         val jdbi = DatabaseConfig.createJdbi(dataSource)
 
         val accountRepository = AccountRepository(jdbi)
-        val authConfigRepository = AuthConfigRepository(jdbi, CredentialCipher(config.credentialEncryptionKey))
+        // Only LOCAL mode persists tokens, so only LOCAL mode needs a cipher - and therefore a key.
+        // Constructing one unconditionally is what made CREDENTIAL_ENCRYPTION_KEY look mandatory in a
+        // mode that provably never touches auth_config.
+        val authConfigStore: AuthConfigStore? =
+            if (config.credentials.mode == CredentialsMode.LOCAL) {
+                AuthConfigRepository(jdbi, CredentialCipher(checkNotNull(config.credentialEncryptionKey)))
+            } else {
+                null
+            }
         val postRepository = InstagramPostRepository(jdbi)
         val catalogRepository = CatalogRepository(jdbi)
         val galleryRepository = GalleryRepository(jdbi)
@@ -122,7 +148,7 @@ fun main() {
             createInstagramAccessTokenProvider(
                 instagram = config.instagram,
                 credentials = config.credentials,
-                authConfigStore = authConfigRepository,
+                authConfigStore = authConfigStore,
                 refreshToken = metaGraphClient::refreshLongLivedToken,
                 okHttpClient = okHttpClient,
             )
