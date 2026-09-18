@@ -6,6 +6,12 @@ import knurl.domain.config.S3Settings
 data class PresentationConfig(
     val database: DatabaseSettings,
     val s3: S3Settings,
+    /**
+     * The single deployment-wide shared secret that authorizes calls to
+     * `PUT /api/v1/admin/accounts/{accountId}/tokens` - the endpoint that provisions a new
+     * account's own per-account admin/read tokens, so it can't itself be gated by one of those.
+     */
+    val presentationProvisioningToken: String,
     val port: Int = 8080,
     val presignedGetTtlSeconds: Long = 21600,
     /**

@@ -7,6 +7,7 @@ import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.CatalogRepository
 import knurl.domain.repositories.GalleryRepository
 import knurl.presentation.ratelimit.RateLimiter
+import knurl.presentation.routes.AdminAccountRoutes
 import knurl.presentation.routes.AdminCatalogRoutes
 import knurl.presentation.routes.AdminGalleryRoutes
 import knurl.presentation.routes.GalleryRoutes
@@ -67,6 +68,7 @@ fun main() {
     val galleryRoutes = GalleryRoutes(galleryRepository, presigner, accountRepository::verifyReadToken)
     val adminCatalogRoutes = AdminCatalogRoutes(catalogRepository, accountRepository::verifyAdminToken, presigner)
     val adminGalleryRoutes = AdminGalleryRoutes(galleryRepository, accountRepository::verifyAdminToken)
+    val adminAccountRoutes = AdminAccountRoutes(accountRepository, config.presentationProvisioningToken)
 
     val app =
         contract {
@@ -78,6 +80,7 @@ fun main() {
             routes += galleryRoutes.routes()
             routes += adminCatalogRoutes.routes()
             routes += adminGalleryRoutes.routes()
+            routes += adminAccountRoutes.routes()
         }
     val docs = "/docs" bind swaggerUiLite { url = "/openapi.json" }
     val routedApp =
