@@ -1,5 +1,6 @@
 package knurl.ingestion
 
+import knurl.domain.config.CredentialsSettings
 import knurl.domain.config.DatabaseSettings
 import knurl.domain.config.S3Settings
 
@@ -7,6 +8,13 @@ data class IngestionConfig(
     val database: DatabaseSettings,
     val s3: S3Settings,
     val instagram: InstagramSettings,
+    /**
+     * Where the Instagram access token comes from. `LOCAL` seeds from `INSTAGRAM_ACCESS_TOKEN` and
+     * refreshes against the Graph API, persisting to `auth_config`; `HTTP` fetches an
+     * already-valid token from a control plane that owns its refresh entirely. Shared verbatim with
+     * `presentation-service`, which reads the same variables to decide where *its* tokens come from.
+     */
+    val credentials: CredentialsSettings = CredentialsSettings(),
     /**
      * Base64-encoded AES-256 key (32 raw bytes) used by [knurl.domain.security.CredentialCipher]
      * to encrypt the Instagram access token before it is persisted to `auth_config`. Generate one
@@ -39,36 +47,8 @@ data class IngestionConfig(
 )
 
 data class InstagramSettings(
+    /** Seeds `LOCAL` credential mode for [businessAccountId] only; unused and rejected in `HTTP`. */
     val accessToken: String? = null,
     val businessAccountId: String,
-    /**
-     * Operator-chosen secret (not an Instagram API credential) gating admin access to this
-     * account's catalog on presentation-service. Registered into `instagram_accounts` on every
-     * startup - rotate by changing this value and restarting.
-     */
-    val adminToken: String,
-    /**
-     * Operator-chosen secret (not an Instagram API credential) gating this account's own,
-     * lower-privilege public gallery-read API on presentation-service. Distinct from [adminToken]
-     * (and, unlike the shared `API_BEARER_TOKEN` this replaced, distinct per account) so a
-     * browser-exposed read token for one account can never be replayed to read another's, and
-     * compromising it never grants admin access. Registered into `instagram_accounts` on every
-     * startup - rotate by changing this value and restarting.
-     */
-    val readToken: String,
     val apiVersion: String = "v21.0",
-    val credentialProvider: InstagramCredentialProviderType = InstagramCredentialProviderType.DATABASE,
-    val credentialBroker: CredentialBrokerSettings = CredentialBrokerSettings(),
-)
-
-enum class InstagramCredentialProviderType {
-    DATABASE,
-    HTTP_BROKER,
-}
-
-data class CredentialBrokerSettings(
-    val url: String? = null,
-    val bearerToken: String? = null,
-    val bearerTokenFile: String? = null,
-    val allowPlaintextHttp: Boolean = false,
 )

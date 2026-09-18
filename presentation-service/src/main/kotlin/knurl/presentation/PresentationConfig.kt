@@ -1,5 +1,7 @@
 package knurl.presentation
 
+import knurl.domain.config.CredentialsMode
+import knurl.domain.config.CredentialsSettings
 import knurl.domain.config.DatabaseSettings
 import knurl.domain.config.S3Settings
 
@@ -7,11 +9,13 @@ data class PresentationConfig(
     val database: DatabaseSettings,
     val s3: S3Settings,
     /**
-     * The single deployment-wide shared secret that authorizes calls to
-     * `PUT /api/v1/admin/accounts/{accountId}/tokens` - the endpoint that provisions a new
-     * account's own per-account admin/read tokens, so it can't itself be gated by one of those.
+     * Where the per-account admin/read tokens this service accepts come from. `LOCAL` reads
+     * [local]; `HTTP` fetches every account's pair from a control plane that owns them, and this
+     * service then mints, rotates and decides nothing.
      */
-    val presentationProvisioningToken: String,
+    val credentials: CredentialsSettings = CredentialsSettings(),
+    /** The single account served in [CredentialsMode.LOCAL]. Required in that mode, ignored in `HTTP`. */
+    val local: LocalCredentials? = null,
     val port: Int = 8080,
     val presignedGetTtlSeconds: Long = 21600,
     /**
@@ -38,9 +42,50 @@ data class PresentationConfig(
                 "(S3's SigV4 7-day cap on presigned URL expiration), was $presignedGetTtlSeconds"
         }
         require(rateLimitPerMinute > 0) { "rateLimitPerMinute must be positive, was $rateLimitPerMinute" }
+
+        // HTTP mode ignores [local] rather than rejecting it. It cannot do otherwise: the bundled
+        // application-local.conf ships inside the jar and always supplies dev values for this block,
+        // so "the operator set ADMIN_TOKEN" is indistinguishable here from "the dev defaults loaded".
+        // Rejecting would make every HTTP-mode deployment fail to start. [knurl.presentation.main]
+        // warns when a value is present and ignored, which is the honest version of this.
+        if (credentials.mode == CredentialsMode.LOCAL) {
+            requireNotNull(local) {
+                "CREDENTIALS_MODE=LOCAL requires INSTAGRAM_BUSINESS_ACCOUNT_ID, ADMIN_TOKEN and READ_TOKEN"
+            }.validate()
+        }
+        credentials.validateHttpSettings()
     }
 
     companion object {
         private const val MAX_PRESIGNED_GET_TTL_SECONDS = 604_800L
     }
+}
+
+/**
+ * The one account a standalone deployment serves, and the two tokens it accepts for that account.
+ *
+ * A single pair cannot serve a multi-tenant process, so `LOCAL` mode is deliberately single-account
+ * - that is what `HTTP` mode and a control plane are for. [adminToken] grants catalog browse,
+ * selection and gallery CRUD; [readToken] grants only gallery reads and is shipped to browsers, so
+ * compromising it must never confer admin access.
+ */
+data class LocalCredentials(
+    val instagramBusinessAccountId: String,
+    val adminToken: String,
+    val readToken: String,
+) {
+    /**
+     * Checked by [PresentationConfig] only under [CredentialsMode.LOCAL], not in an `init` block -
+     * config loading constructs this in either mode, and blank values are perfectly legitimate in
+     * `HTTP` mode, where nothing ever reads them.
+     */
+    fun validate() {
+        require(instagramBusinessAccountId.isNotBlank()) { "INSTAGRAM_BUSINESS_ACCOUNT_ID must not be blank" }
+        require(adminToken.isNotBlank()) { "ADMIN_TOKEN must not be blank" }
+        require(readToken.isNotBlank()) { "READ_TOKEN must not be blank" }
+        require(adminToken != readToken) { "ADMIN_TOKEN and READ_TOKEN must differ" }
+    }
+
+    /** True when any field carries a value, i.e. this block was configured rather than left empty. */
+    internal fun isConfigured(): Boolean = instagramBusinessAccountId.isNotBlank() || adminToken.isNotBlank() || readToken.isNotBlank()
 }

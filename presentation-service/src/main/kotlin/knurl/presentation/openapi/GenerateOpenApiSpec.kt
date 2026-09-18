@@ -4,6 +4,10 @@ import knurl.domain.config.S3Settings
 import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.CatalogRepository
 import knurl.domain.repositories.GalleryRepository
+import knurl.presentation.credentials.AccountCredentialStore
+import knurl.presentation.credentials.CredentialRefresher
+import knurl.presentation.credentials.CredentialSource
+import knurl.presentation.routes.AdminAccountRoutes
 import knurl.presentation.routes.AdminCatalogRoutes
 import knurl.presentation.routes.AdminGalleryRoutes
 import knurl.presentation.routes.GalleryRoutes
@@ -45,9 +49,17 @@ fun main(args: Array<String>) {
             ),
             Duration.ofSeconds(21600),
         )
-    val galleryRoutes = GalleryRoutes(galleryRepository, presigner, accountRepository::verifyReadToken)
-    val adminCatalogRoutes = AdminCatalogRoutes(catalogRepository, accountRepository::verifyAdminToken, presigner)
-    val adminGalleryRoutes = AdminGalleryRoutes(galleryRepository, accountRepository::verifyAdminToken)
+    // An empty credential store: like the repositories above, it only has to exist for the route
+    // definitions to be constructed. No handler runs, so nothing ever reads it.
+    val credentialStore = AccountCredentialStore()
+    val credentialRefresher = CredentialRefresher(CredentialSource { emptyMap() }, credentialStore, accountRepository)
+
+    val galleryRoutes = GalleryRoutes(galleryRepository, presigner, credentialStore::verifyReadToken)
+    val adminCatalogRoutes = AdminCatalogRoutes(catalogRepository, credentialStore::verifyAdminToken, presigner)
+    val adminGalleryRoutes = AdminGalleryRoutes(galleryRepository, credentialStore::verifyAdminToken)
+    // Served only under CREDENTIALS_MODE=HTTP at runtime, but always documented: the spec describes
+    // the service's full API surface, not one deployment's configuration of it.
+    val adminAccountRoutes = AdminAccountRoutes(credentialRefresher) { "placeholder" }
 
     val app =
         contract {
@@ -56,6 +68,7 @@ fun main(args: Array<String>) {
             routes += galleryRoutes.routes()
             routes += adminCatalogRoutes.routes()
             routes += adminGalleryRoutes.routes()
+            routes += adminAccountRoutes.routes()
         }
 
     val outputPath = args.firstOrNull() ?: "build/openapi/openapi.json"

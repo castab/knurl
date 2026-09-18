@@ -800,6 +800,21 @@
         "deprecated" : false,
         "callbacks" : null
       }
+    },
+    "/api/v1/admin/credentials/refresh" : {
+      "put" : {
+        "summary" : "Signal that account credentials changed, prompting a re-fetch",
+        "description" : "Takes no body. This service re-fetches every account's tokens from the configured credential endpoint and replaces its in-memory set with the result.",
+        "tags" : [ "" ],
+        "parameters" : [ ],
+        "responses" : { },
+        "security" : [ {
+          "credentialsBearer" : [ ]
+        } ],
+        "operationId" : "putApiV1AdminCredentialsRefresh",
+        "deprecated" : false,
+        "callbacks" : null
+      }
     }
   },
   "webhooks" : null,
@@ -1631,6 +1646,10 @@
         "type" : "http"
       },
       "accountAdminBearer" : {
+        "scheme" : "bearer",
+        "type" : "http"
+      },
+      "credentialsBearer" : {
         "scheme" : "bearer",
         "type" : "http"
       }

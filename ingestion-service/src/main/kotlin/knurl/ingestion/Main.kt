@@ -17,7 +17,7 @@ import knurl.domain.security.CredentialCipher
 import knurl.ingestion.client.MetaGraphClient
 import knurl.ingestion.credentials.InstagramAccessTokenProvider
 import knurl.ingestion.credentials.createInstagramAccessTokenProvider
-import knurl.ingestion.credentials.validateInstagramCredentialSettings
+import knurl.ingestion.credentials.validateCredentialsSettings
 import knurl.ingestion.pipeline.DownloadWorker
 import knurl.ingestion.pipeline.OrphanSweeper
 import knurl.ingestion.pipeline.SyncPipeline
@@ -81,7 +81,7 @@ fun main() {
                 .build()
                 .loadConfigOrThrow<IngestionConfig>()
 
-        validateInstagramCredentialSettings(config.instagram)
+        validateCredentialsSettings(config.instagram, config.credentials)
 
         val dataSource = DatabaseConfig.createDataSource(config.database)
         DatabaseConfig.runMigrations(dataSource)
@@ -97,12 +97,14 @@ fun main() {
         val accountClaimRepository = AccountClaimRepository(jdbi)
         val downloadQueueRepository = DownloadQueueRepository(jdbi)
 
-        // Registers/seeds exactly the one account from INSTAGRAM_BUSINESS_ACCOUNT_ID et al., unchanged
-        // from standalone Knurl's original single-account shape. This is the single-account convenience/
-        // bootstrap path, not how a multi-account deployment provisions additional accounts - those rows
-        // are inserted directly (see README), and accountClaimRepository/downloadQueueRepository below
-        // pick up any account or item in the database regardless of which process registered it.
-        accountRepository.register(config.instagram.businessAccountId, config.instagram.adminToken, config.instagram.readToken)
+        // Anchors exactly the one account from INSTAGRAM_BUSINESS_ACCOUNT_ID so rows referencing it can
+        // exist. Deliberately writes no credentials: this call used to overwrite the account's
+        // presentation tokens from this process's own env on every boot, which silently invalidated
+        // whatever a control plane had provisioned each time ingestion restarted. Additional accounts
+        // arrive via presentation-service's credential fetch in HTTP mode, and
+        // accountClaimRepository/downloadQueueRepository below pick up any account or item in the
+        // database regardless of which process anchored it.
+        accountRepository.ensureAccount(config.instagram.businessAccountId)
 
         val okHttpClient =
             OkHttpClient
@@ -118,7 +120,8 @@ fun main() {
         val metaGraphClient = MetaGraphClient(okHttpClient, config.instagram.apiVersion)
         val accessTokenProvider =
             createInstagramAccessTokenProvider(
-                settings = config.instagram,
+                instagram = config.instagram,
+                credentials = config.credentials,
                 authConfigStore = authConfigRepository,
                 refreshToken = metaGraphClient::refreshLongLivedToken,
                 okHttpClient = okHttpClient,

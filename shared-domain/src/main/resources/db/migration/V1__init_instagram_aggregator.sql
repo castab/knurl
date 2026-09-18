@@ -2,18 +2,16 @@
 
 -- 0. Multi-tenant Account Registry
 -- `instagram_account_id` is the Graph API business account id - public, non-secret information,
--- safe to use as a URL path segment. `admin_token_hash` gates admin access (catalog
--- browse/selection) to this account's own content; `read_token_hash` gates the public,
--- lower-privilege gallery-read API to this account's own galleries - each account gets its own,
--- so a token valid for one account's gallery reads can never be replayed against another's (the
--- single API_BEARER_TOKEN shared by every account this replaced could). Both are
--- set/rotated by whichever `ingestion-service` instance owns this account, not by
--- `presentation-service`.
+-- safe to use as a URL path segment.
 --
--- Only a TokenHasher.sha256 digest of each token is ever stored here, never the plaintext - a
--- database read alone (backup, replica, log, compromised ops account) must not yield a working
--- credential. AccountRepository.verifyAdminToken/verifyReadToken re-hash the candidate and
--- compare digests; the plaintext never needs to round-trip back out, so a one-way hash is enough.
+-- This table holds no credentials. It once carried `admin_token_hash`/`read_token_hash`, written by
+-- whichever `ingestion-service` instance owned the account on every startup - which meant an
+-- ingestion restart silently overwrote whatever a control plane had provisioned. Presentation
+-- tokens now live only in `presentation-service`'s in-memory credential store, sourced per
+-- CREDENTIALS_MODE from either its own environment (LOCAL) or a control plane (HTTP), so no
+-- deployment has two writers racing over one column. What remains here is identity and work state:
+-- the foreign-key anchor that instagram_posts/galleries reference, and the claim timestamps below.
+--
 -- last_synced_at/sync_claimed_at drive ingestion-service's account-agnostic feed-sync claim: any
 -- worker, in any process, claims whichever account is due (last_synced_at NULL or stale) and not
 -- currently claimed (sync_claimed_at NULL or stale) via `UPDATE ... FOR UPDATE SKIP LOCKED`, syncs
@@ -23,8 +21,6 @@
 -- there is no separate reaper process and no distinction between "failed" and "crashed".
 CREATE TABLE instagram_accounts (
     instagram_account_id VARCHAR(100) PRIMARY KEY,
-    admin_token_hash TEXT NOT NULL,
-    read_token_hash TEXT NOT NULL,
     last_synced_at TIMESTAMP WITH TIME ZONE,
     sync_claimed_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP

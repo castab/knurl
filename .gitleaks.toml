@@ -18,10 +18,12 @@ useDefault = true
 # instead matches only the exact known-fake literal value, wherever it appears.
 description = "Fixed, checked-in, non-secret local-dev credentials and README documentation placeholders"
 regexes = [
-  '''knurl-dev-secret''',             # docker-compose.yml MinIO root password / application-local.conf S3 secret key
-  '''dev-token''',                    # presentation-service/src/main/resources/application-local.conf apiBearerToken
-  '''your-long-lived-access-token''', # README.md's application-instagram.conf example block
-  '''pick-your-own-admin-secret''',   # README.md's application-instagram.conf example block
+  '''knurl-dev-secret''',              # docker-compose.yml MinIO root password / application-local.conf S3 secret key
+  '''dev-token''',                     # presentation-service/src/main/resources/application-local.conf apiBearerToken
+  '''your-long-lived-access-token''',  # README.md's application-instagram.conf example block
+  '''pick-your-own-admin-secret''',    # README.md's application-instagram.conf example block
+  '''dev-admin-token-not-secret''',    # presentation-service/src/main/resources/application-local.conf local.adminToken
+  '''dev-read-token-not-secret''',     # presentation-service/src/main/resources/application-local.conf local.readToken
 ]
 
 # Verified gap: gitleaks' bundled `generic-api-key` rule caps the secret length short enough

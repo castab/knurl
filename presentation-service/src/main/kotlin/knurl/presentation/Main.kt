@@ -2,10 +2,18 @@ package knurl.presentation
 
 import com.sksamuel.hoplite.ConfigLoaderBuilder
 import com.sksamuel.hoplite.PropertySource
+import knurl.domain.config.CredentialsMode
 import knurl.domain.config.DatabaseConfig
+import knurl.domain.http.createBearerTokenSource
+import knurl.domain.http.requireNonBlank
 import knurl.domain.repositories.AccountRepository
 import knurl.domain.repositories.CatalogRepository
 import knurl.domain.repositories.GalleryRepository
+import knurl.presentation.credentials.AccountCredentialStore
+import knurl.presentation.credentials.CredentialRefresher
+import knurl.presentation.credentials.CredentialSource
+import knurl.presentation.credentials.HttpCredentialSource
+import knurl.presentation.credentials.LocalCredentialSource
 import knurl.presentation.ratelimit.RateLimiter
 import knurl.presentation.routes.AdminAccountRoutes
 import knurl.presentation.routes.AdminCatalogRoutes
@@ -13,6 +21,7 @@ import knurl.presentation.routes.AdminGalleryRoutes
 import knurl.presentation.routes.GalleryRoutes
 import knurl.presentation.s3.Presigner
 import knurl.presentation.security.SecurityHeaders
+import okhttp3.OkHttpClient
 import org.http4k.contract.contract
 import org.http4k.contract.openapi.ApiInfo
 import org.http4k.contract.openapi.v3.OpenApi3
@@ -29,6 +38,7 @@ import org.http4k.routing.static
 import org.http4k.server.Undertow
 import org.http4k.server.asServer
 import java.time.Duration
+import java.util.concurrent.TimeUnit
 
 /**
  * Plain `fun main()` entrypoint - no application framework. Everything below is manually
@@ -36,13 +46,16 @@ import java.time.Duration
  *
  * Architectural boundary: this service's database writes are bounded to the per-gallery analytics
  * counters (POST .../galleries/{galleryId}/track), the gallery CRUD and membership under
- * /api/v1/admin/accounts/{accountId}/galleries, and the deletion clock those maintain. Crucially it
- * issues no S3 call beyond presigning reads - every byte deletion stays ingestion-service's job. It
- * never runs Flyway migrations (ingestion-service owns the schema) and never calls the Meta Graph API.
+ * /api/v1/admin/accounts/{accountId}/galleries, the deletion clock those maintain, and - new with
+ * CREDENTIALS_MODE=HTTP - anchoring an `instagram_accounts` row for each account a credential fetch
+ * returns, so galleries can reference it and ingestion's workers will claim it. Crucially it issues
+ * no S3 call beyond presigning reads - every byte deletion stays ingestion-service's job. It never
+ * runs Flyway migrations (ingestion-service owns the schema) and never calls the Meta Graph API.
  *
- * This is a genuinely multi-tenant deployment: one process serves every ingested Instagram
- * account, each identified by its (public, non-secret) account id in the URL path. Compare
- * ingestion-service, which stays one-process-per-account.
+ * In HTTP mode this is a genuinely multi-tenant deployment: one process serves every account the
+ * control plane provisions, each identified by its (public, non-secret) account id in the URL path.
+ * LOCAL mode is deliberately single-account, since one ADMIN_TOKEN/READ_TOKEN pair cannot safely
+ * span tenants.
  */
 fun main() {
     val config =
@@ -64,11 +77,65 @@ fun main() {
     val galleryRepository = GalleryRepository(jdbi)
     val catalogRepository = CatalogRepository(jdbi)
 
+    val okHttpClient =
+        if (config.credentials.mode == CredentialsMode.HTTP) {
+            OkHttpClient
+                .Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
+                .build()
+        } else {
+            null
+        }
+
+    // One secret, both directions: the token this service presents when fetching credentials is the
+    // same one it requires on the control plane's refresh signal, because both authenticate the one
+    // trust relationship between these two processes.
+    val credentialsBearerSource =
+        if (config.credentials.mode == CredentialsMode.HTTP) {
+            createBearerTokenSource(
+                config.credentials.http.authorizationToken,
+                config.credentials.http.authorizationTokenFile,
+            )
+        } else {
+            null
+        }
+
+    if (config.credentials.mode == CredentialsMode.HTTP && config.local?.isConfigured() == true) {
+        println(
+            "WARN: CREDENTIALS_MODE=HTTP ignores ADMIN_TOKEN/READ_TOKEN/INSTAGRAM_BUSINESS_ACCOUNT_ID; " +
+                "every account's tokens come from CREDENTIALS_HTTP_URL",
+        )
+    }
+
+    val credentialSource: CredentialSource =
+        when (config.credentials.mode) {
+            CredentialsMode.LOCAL -> {
+                LocalCredentialSource(checkNotNull(config.local))
+            }
+
+            CredentialsMode.HTTP -> {
+                HttpCredentialSource(
+                    okHttpClient = checkNotNull(okHttpClient),
+                    endpointUrl =
+                        config.credentials.http.url
+                            .requireNonBlank("CREDENTIALS_HTTP_URL"),
+                    bearerTokenSource = checkNotNull(credentialsBearerSource),
+                    allowPlaintext = config.credentials.http.allowPlaintext,
+                )
+            }
+        }
+
+    val credentialStore = AccountCredentialStore()
+    val credentialRefresher = CredentialRefresher(credentialSource, credentialStore, accountRepository)
+    // Before the server binds, so no request is ever served against an empty credential set - which
+    // would 404 every account indistinguishably from one that had genuinely been deleted.
+    credentialRefresher.loadAtStartup()
+
     val presigner = Presigner.create(config.s3, Duration.ofSeconds(config.presignedGetTtlSeconds))
-    val galleryRoutes = GalleryRoutes(galleryRepository, presigner, accountRepository::verifyReadToken)
-    val adminCatalogRoutes = AdminCatalogRoutes(catalogRepository, accountRepository::verifyAdminToken, presigner)
-    val adminGalleryRoutes = AdminGalleryRoutes(galleryRepository, accountRepository::verifyAdminToken)
-    val adminAccountRoutes = AdminAccountRoutes(accountRepository, config.presentationProvisioningToken)
+    val galleryRoutes = GalleryRoutes(galleryRepository, presigner, credentialStore::verifyReadToken)
+    val adminCatalogRoutes = AdminCatalogRoutes(catalogRepository, credentialStore::verifyAdminToken, presigner)
+    val adminGalleryRoutes = AdminGalleryRoutes(galleryRepository, credentialStore::verifyAdminToken)
 
     val app =
         contract {
@@ -80,7 +147,11 @@ fun main() {
             routes += galleryRoutes.routes()
             routes += adminCatalogRoutes.routes()
             routes += adminGalleryRoutes.routes()
-            routes += adminAccountRoutes.routes()
+            // Only in HTTP mode: with locally-configured credentials there is nothing to re-fetch,
+            // so the route would be an unauthenticated-by-nothing surface serving no purpose.
+            if (config.credentials.mode == CredentialsMode.HTTP) {
+                routes += AdminAccountRoutes(credentialRefresher, checkNotNull(credentialsBearerSource)).routes()
+            }
         }
     val docs = "/docs" bind swaggerUiLite { url = "/openapi.json" }
     val routedApp =

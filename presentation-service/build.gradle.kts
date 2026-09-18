@@ -49,6 +49,11 @@ dependencies {
         // of this pin - 2.22 is the version conflict resolution already converges on above.
         implementation("com.fasterxml.jackson.core:jackson-annotations:2.22")
     }
+
+    // OkHttp itself arrives transitively from shared-domain's credential-HTTP hardening, which this
+    // service's credential fetch is built on. MockWebServer exercises that fetch for real, rather
+    // than mocking away the client whose bounds and TLS rules are the point of the tests.
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
 
 /**
