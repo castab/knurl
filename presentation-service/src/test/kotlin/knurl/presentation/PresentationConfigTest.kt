@@ -18,6 +18,7 @@ private fun testConfig(
                 accessKeyId = "test-access-key",
                 secretAccessKey = "test-secret-key",
             ),
+        presentationProvisioningToken = "test-provisioning-token",
         presignedGetTtlSeconds = presignedGetTtlSeconds,
         rateLimitPerMinute = rateLimitPerMinute,
     )
