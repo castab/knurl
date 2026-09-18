@@ -49,17 +49,17 @@ Each service reads its config from a bundled `application.conf` (HOCON), which c
 | `PORT` | no | presentation | HTTP port. Default `8080`. |
 | `UI_ENABLED` | no | presentation | Set to `true` to enable the built-in gallery/admin UI served at `/` (the JSON API, `/docs`, and `/openapi.json` are unaffected either way). **Default `false`** - the UI has no login of its own, so a deployment must opt in rather than serve an admin surface by accident. It's a thin client that asks the operator to paste tokens, holds them in `sessionStorage`, and sends them as Bearer headers. |
 | `RATE_LIMIT_PER_MINUTE` | no | presentation | Requests allowed per client IP per rolling minute, applied to every route. Default `120`. Keyed by the first hop of `X-Forwarded-For`; clients behind no proxy (or a proxy that doesn't set it) share one bucket. |
-| `INSTAGRAM_ACCESS_TOKEN` | database mode | ingestion | Long-lived Instagram Graph API access token used to seed standalone database-backed token refresh for `INSTAGRAM_BUSINESS_ACCOUNT_ID` only - see [Account-agnostic ingestion](#account-agnostic-ingestion). |
-| `INSTAGRAM_BUSINESS_ACCOUNT_ID` | yes | ingestion | The one Instagram Business Account ID this process registers/seeds at startup. Public, non-secret - it's also the `{accountId}` path segment on presentation-service. This is a single-account bootstrap convenience, not a restriction on which accounts this process's workers can claim and sync - see [Account-agnostic ingestion](#account-agnostic-ingestion). |
-| `ADMIN_TOKEN` | yes | ingestion | Operator-chosen secret (not an Instagram credential) gating this account's admin catalog/selection API on presentation-service. Registered into the database on every `ingestion-service` startup - change and restart to rotate it. Only a SHA-256 hash of this value is ever persisted (`instagram_accounts.admin_token_hash`); the plaintext never round-trips out of the database. |
-| `READ_TOKEN` | yes | ingestion | Operator-chosen secret (not an Instagram credential) gating this account's own public gallery-read API on presentation-service - distinct from `ADMIN_TOKEN`, and, unlike a single deployment-wide token, scoped to this account only. Registered and hashed the same way as `ADMIN_TOKEN`; a browser client needs this, not the admin token, to read galleries. |
+| `CREDENTIALS_MODE` | no | both | `LOCAL` (default) or `HTTP` — see [Credential modes](#credential-modes). The same variable, with the same meaning, in both services. |
+| `CREDENTIALS_HTTP_URL` | HTTP mode | both | Exact endpoint this service fetches its credentials from. **Different value per service**: ingestion points at the per-account Instagram-token endpoint, presentation at the endpoint listing every account's token pair. HTTPS is required unless loopback is used or plaintext is explicitly enabled. |
+| `CREDENTIALS_AUTHORIZATION_TOKEN` | HTTP mode | both | Pre-shared secret authorizing this service's credential fetches. On presentation it is also the secret required on the control plane's `PUT /api/v1/admin/credentials/refresh` signal — one secret for one trust relationship, in both directions. Configure this or the file variant, never both. |
+| `CREDENTIALS_AUTHORIZATION_TOKEN_FILE` | HTTP mode | both | File containing that secret. Reread on every use, so a rotating mounted workload credential takes effect without a restart. |
+| `CREDENTIALS_HTTP_ALLOW_PLAINTEXT` | no | both | Set `true` only when the credential endpoint is reached over a trusted private service network. Default `false`; loopback HTTP is always allowed for local development. |
+| `INSTAGRAM_ACCESS_TOKEN` | LOCAL mode | ingestion | Long-lived Instagram Graph API access token seeding database-backed refresh for `INSTAGRAM_BUSINESS_ACCOUNT_ID` only - see [Account-agnostic ingestion](#account-agnostic-ingestion). Unused in `HTTP` mode, where the control plane owns refresh. |
+| `INSTAGRAM_BUSINESS_ACCOUNT_ID` | yes / LOCAL mode | ingestion (always), presentation (LOCAL mode) | The Instagram Business Account ID. Public, non-secret - it's also the `{accountId}` path segment on presentation-service. ingestion anchors this one account's row at startup in either mode; presentation uses it in `LOCAL` mode as the account `ADMIN_TOKEN`/`READ_TOKEN` apply to. Not a restriction on which accounts ingestion's workers claim - see [Account-agnostic ingestion](#account-agnostic-ingestion). |
+| `ADMIN_TOKEN` | LOCAL mode | presentation | Operator-chosen secret (not an Instagram credential) gating `INSTAGRAM_BUSINESS_ACCOUNT_ID`'s admin catalog/selection API. Held only as a SHA-256 hash in memory; change and restart to rotate. Unset it in `HTTP` mode, which rejects it rather than silently ignoring it. |
+| `READ_TOKEN` | LOCAL mode | presentation | Operator-chosen secret gating that same account's public gallery-read API - distinct from `ADMIN_TOKEN` and, since it is shipped to browsers, never a substitute for it. Same handling and same `HTTP`-mode rejection. |
 | `CREDENTIAL_ENCRYPTION_KEY` | yes | ingestion | Base64-encoded AES-256 key (32 raw bytes) used to encrypt the Instagram access token before it is persisted to `auth_config.access_token_encrypted`. Generate one with `CredentialCipher.generateKey()`. Rotating it makes any already-stored token undecryptable - delete that account's `auth_config` row (or ensure `INSTAGRAM_ACCESS_TOKEN` is set fresh) after rotating. |
 | `INSTAGRAM_API_VERSION` | no | ingestion | Graph API version. Default `v21.0`. |
-| `INSTAGRAM_CREDENTIAL_PROVIDER` | no | ingestion | `DATABASE` (default) preserves standalone config/DB-backed token refresh; `HTTP_BROKER` obtains a valid token from an external credential broker. Either strategy resolves a token per account as workers claim work for it, not just for the one bootstrapped account. |
-| `INSTAGRAM_CREDENTIAL_BROKER_URL` | broker mode | ingestion | Exact credential-broker endpoint URL. HTTPS is required unless loopback is used or plaintext HTTP is explicitly enabled for a trusted private network. |
-| `INSTAGRAM_CREDENTIAL_BROKER_TOKEN` | broker mode | ingestion | Job bearer token used to authenticate every request to the broker, whichever account the request is for. Configure this or the token-file option, never both. |
-| `INSTAGRAM_CREDENTIAL_BROKER_TOKEN_FILE` | broker mode | ingestion | File containing the job bearer token. Reread on every request to support rotating mounted workload credentials. |
-| `INSTAGRAM_CREDENTIAL_BROKER_ALLOW_PLAINTEXT_HTTP` | no | ingestion | Set `true` only when the broker is reached over a trusted private service network. Default `false`; loopback HTTP is always allowed for local development. |
 | `RUN_ONCE` | no | ingestion | `true` to have every worker loop drain to "nothing currently claimable" and exit, instead of polling indefinitely (for cron-triggered deployment). Default `false`. |
 | `INGESTION_INTERVAL_SECONDS` | no | ingestion | How stale an account's last successful sync must be before it's due again. Default `900`. Per-account, not a global cadence. **Only applies to the persistent-daemon case** (`RUN_ONCE=false`) - a `RUN_ONCE` invocation always treats every account as due, since the operator's own trigger (schedule or manual) is the real cadence control there. See [Account-agnostic ingestion](#account-agnostic-ingestion). |
 | `FEED_SYNC_CONCURRENCY` | no | ingestion | Concurrent feed-sync worker coroutines, each claiming and syncing one due account at a time. Default `1`. |
@@ -75,9 +75,31 @@ Each service reads its config from a bundled `application.conf` (HOCON), which c
 
 **Token exposure:** `READ_TOKEN` guards browser-called gallery reads and `POST .../galleries/{galleryId}/track` for one account, so any real browser client must ship it to the browser. Treat it as an access gate against casual abuse, not strong authentication — it is not a secret once a gallery page uses it, and a leaked read token exposes only that one account's galleries, never another's. A per-account `ADMIN_TOKEN` is a genuine secret: it is never embedded in a page, and the bundled UI keeps both tokens only in `sessionStorage` for the life of the tab. `RATE_LIMIT_PER_MINUTE` backs this with an actual enforced limit, not just an honor system.
 
-In standalone `DATABASE` credential mode, `INSTAGRAM_ACCESS_TOKEN` seeds the first refresh for `INSTAGRAM_BUSINESS_ACCOUNT_ID` only; every other account a worker claims must already have its own `auth_config` row (provisioned the same way its `instagram_accounts` row was - see [Account-agnostic ingestion](#account-agnostic-ingestion)), and refreshed values for any account are stored back into `auth_config`. In `HTTP_BROKER` mode, the broker owns refresh and persistence for every account: ingestion requests a currently valid token per account as its workers claim work for it, verifies that the response belongs to the account it asked about, and never reads or writes `auth_config`. Broker failures do not fall back to database credentials. The broker authenticates each job with one bearer token that must be able to resolve credentials for *any* account this deployment serves, dispatched by an explicit `accountId` query parameter on each request, and returns JSON shaped as `{ "instagramAccountId": "...", "accessToken": "...", "expiresAt": "..." }` with `Cache-Control: no-store`; `expiresAt` must be an ISO-8601 instant more than 24 hours in the future. **This is a breaking change from a single-account-per-process broker contract** - a broker built against that older shape needs updating to dispatch by the requested account id rather than assuming one account per bearer token.
+### Credential modes
 
-Broker authentication is required even on a private network. Plaintext HTTP is disabled by default because both bearer credentials cross that connection; enable it only for an isolated internal network such as Railway private networking. If an account is later switched from broker mode back to database mode, its previous `auth_config` row becomes active again. Delete that account's stale row before startup when the configured seed token must take effect immediately.
+`CREDENTIALS_MODE` is one flag with one meaning in both services: where the credentials they use and accept come from. It defaults to `LOCAL`, so a standalone deployment needs no extra configuration.
+
+**`LOCAL`** — Knurl is self-sufficient, with no external dependency. `presentation-service` accepts `ADMIN_TOKEN`/`READ_TOKEN` for `INSTAGRAM_BUSINESS_ACCOUNT_ID`, hashing both into memory at startup. `ingestion-service` seeds its Instagram token from `INSTAGRAM_ACCESS_TOKEN` for that same account, refreshes it against the Graph API when fewer than 24 hours remain, and stores the result AES-GCM-encrypted in `auth_config`. Every other account a worker claims must already have its own `auth_config` row.
+
+**`LOCAL` mode is deliberately single-account.** One `ADMIN_TOKEN`/`READ_TOKEN` pair cannot safely span tenants — a token valid for one account's galleries must never read another's. Serving several accounts is what `HTTP` mode is for.
+
+**`HTTP`** — a control plane owns all credential authority, and Knurl mints, rotates and decides nothing. `presentation-service` fetches every account's token pair from `CREDENTIALS_HTTP_URL` before it binds a port, hashes them into memory, and anchors an `instagram_accounts` row for each — which is how an account the control plane provisions becomes one this deployment can create galleries for and will start syncing. `ingestion-service` requests a currently valid Instagram token per account as its workers claim work for it, verifies the response belongs to the account it asked about, and never reads or writes `auth_config`. A failed fetch never falls back to local credentials.
+
+Rotation is signalled, not pushed: the control plane sends a bodyless `PUT /api/v1/admin/credentials/refresh` (bearing `CREDENTIALS_AUTHORIZATION_TOKEN`) and `presentation-service` re-fetches the authoritative set itself, replacing it wholesale — a per-account update could not express that an account had been removed. That route exists only in `HTTP` mode. Until a fetch succeeds the previous credentials stay live, so a control-plane outage degrades to stale data rather than a total denial.
+
+The two endpoints Knurl expects:
+
+```
+GET <presentation's CREDENTIALS_HTTP_URL>       Authorization: Bearer <secret>
+200 → {"accounts":[{"instagramAccountId":"…","adminToken":"…","readToken":"…"}]}
+
+GET <ingestion's CREDENTIALS_HTTP_URL>?accountId=…   Authorization: Bearer <secret>
+200 → {"instagramAccountId":"…","accessToken":"…","expiresAt":"<ISO-8601>"}
+```
+
+`expiresAt` must be more than 24 hours in the future; Knurl rejects a token that is not, rather than using it and failing mid-sync. Both responses are capped at 16 KiB and should be served `Cache-Control: no-store`.
+
+Authentication is required even on a private network, and plaintext HTTP is disabled by default because the bearer credential crosses that connection — enable `CREDENTIALS_HTTP_ALLOW_PLAINTEXT` only for an isolated internal network such as Railway private networking. If an account is later switched from `HTTP` back to `LOCAL`, its previous `auth_config` row becomes active again; delete that stale row before startup when the configured seed token must take effect immediately.
 
 Which posts get synced is admin-curated via an API, not an environment variable or config row — see "Curating what appears in a gallery" below.
 
@@ -92,7 +114,9 @@ Two independent kinds of work are claimed this way:
 
 Both claims are **fast claim-and-release, not a held transaction**: the connection is released immediately after claiming, the actual sync/download work runs with nothing held open, and a second short statement records completion. A worker that crashes or fails mid-item simply leaves its claim in place with a now-stale timestamp - the next claim query treats that identically to a fresh crash and retakes it, with no separate reaper process, no lease-expiry timer to run, and no distinction between "failed cleanly" and "crashed outright". Look for a `WARN`-level "Reclaiming abandoned ..." log line if this happens; it's expected occasionally (a deploy killing a worker mid-item) and only a problem if it happens *often*, which usually means a lease is set too short for how long the work actually takes.
 
-`INSTAGRAM_BUSINESS_ACCOUNT_ID`/`ADMIN_TOKEN`/`READ_TOKEN`/`INSTAGRAM_ACCESS_TOKEN` remain a **single-account bootstrap/convenience path only** - they register/seed exactly one account at startup, unchanged from standalone Knurl's original shape, and do not limit which accounts this process's workers can subsequently claim and sync. A multi-account deployment provisions additional accounts by inserting directly into `instagram_accounts` (with `admin_token_hash`/`read_token_hash` - use `TokenHasher.sha256`) and `auth_config` (with an already-encrypted token, in `DATABASE` credential mode) or by relying on an `HTTP_BROKER` that can resolve credentials for the new account by id. There is currently no `presentation-service` admin endpoint for this - it's a deliberate scope boundary, not an oversight, left as future work.
+`INSTAGRAM_BUSINESS_ACCOUNT_ID`/`INSTAGRAM_ACCESS_TOKEN` remain a **single-account bootstrap/convenience path only** - `ingestion-service` anchors and seeds exactly that one account at startup, and this does not limit which accounts its workers can subsequently claim and sync. Note that anchoring writes no credentials: the account row carries identity and sync-claim state, nothing more.
+
+A multi-account deployment runs in `HTTP` credential mode, where the control plane is the provisioning path — `presentation-service` anchors an `instagram_accounts` row for every account its credential fetch returns, and ingestion's workers then claim it like any other. In `LOCAL` mode there is no multi-account path, by design: see [Credential modes](#credential-modes).
 
 ### Retention and deletion
 
@@ -131,8 +155,10 @@ docker compose down -v    # stop and wipe all data when you want a clean slate
 MinIO's web console is at http://localhost:9001 (login `knurl` / `knurl-dev-secret`) if you want to browse uploaded objects.
 
 > **Schema changes are folded into `V1__init_instagram_aggregator.sql` rather than stacked as new migrations**, because there is no production data to preserve yet. Flyway validates checksums, so a database that already ran an older `V1` will **fail to start** after one of these edits. Reset it (`docker compose down -v`, or drop the schema on a deployed database) — the data is re-derivable: `ingestion-service` re-catalogs the whole feed on its next cycle. Note that galleries and their contents are *not* re-derivable and will need re-creating. Once real data exists that matters, switch to stacking `V2`, `V3`, … instead.
+>
+> The credential-mode work dropped `instagram_accounts.admin_token_hash`/`read_token_hash` under this policy, so **every existing database must be reset before it will start again**, and any galleries on it re-created by hand.
 
-Both services load `application-local.conf` (shared dev config, tracked in git) on startup, which already matches the credentials above and also switches `uiEnabled` back to `true` (its default is `false` everywhere else - see the `UI_ENABLED` row above). For `ingestion-service`, you'll also need Instagram credentials:
+Both services load `application-local.conf` (shared dev config, tracked in git) on startup, which already matches the credentials above and also switches `uiEnabled` back to `true` (its default is `false` everywhere else - see the `UI_ENABLED` row above). It also supplies `presentation-service`'s dev `LOCAL`-mode account id and token pair, so the bundled UI works out of the box. For `ingestion-service`, you'll also need real Instagram credentials:
 
 **Create `ingestion-service/config/application-instagram.conf`** (gitignored):
 ```hocon
@@ -140,10 +166,10 @@ Both services load `application-local.conf` (shared dev config, tracked in git) 
 instagram {
   accessToken = "your-long-lived-access-token"
   businessAccountId = "your-business-account-id"
-  adminToken = "pick-your-own-admin-secret"
-  readToken = "pick-a-different-secret-for-gallery-reads"
 }
 ```
+
+Set `businessAccountId` to the same value as `presentation-service`'s `local.instagramBusinessAccountId` (`dev-account` in the checked-in dev config) so both services are talking about one account — or override the latter with `INSTAGRAM_BUSINESS_ACCOUNT_ID`.
 
 Then run either service:
 

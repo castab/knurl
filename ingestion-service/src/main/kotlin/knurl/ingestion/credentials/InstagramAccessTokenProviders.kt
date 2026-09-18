@@ -1,28 +1,29 @@
 package knurl.ingestion.credentials
 
+import knurl.domain.config.CredentialsMode
+import knurl.domain.config.CredentialsSettings
+import knurl.domain.http.CredentialHttpException
+import knurl.domain.http.createBearerTokenSource
+import knurl.domain.http.readBoundedBody
+import knurl.domain.http.requireNonBlank
+import knurl.domain.http.requireValidSecret
+import knurl.domain.http.validCredentialValue
+import knurl.domain.http.validateCredentialEndpoint
 import knurl.domain.models.AuthConfig
 import knurl.domain.repositories.AuthConfigStore
-import knurl.ingestion.CredentialBrokerSettings
-import knurl.ingestion.InstagramCredentialProviderType
 import knurl.ingestion.InstagramSettings
 import knurl.ingestion.client.TokenRefreshResult
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
-import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
-import java.nio.charset.StandardCharsets
-import java.nio.file.Files
-import java.nio.file.Path
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 
 private val TOKEN_REFRESH_THRESHOLD: Duration = Duration.ofHours(24)
-private const val MAX_CREDENTIAL_BYTES = 16 * 1024
 
 /**
  * Supplies the Instagram access token for a given account, shared across every account a
@@ -82,15 +83,15 @@ class DatabaseInstagramAccessTokenProvider(
 }
 
 /**
- * Retrieves a token whose refresh and persistence are owned by an external credential broker,
- * for whichever account [getAccessToken] is asked about.
+ * Retrieves a token whose refresh and persistence are owned by an external credential service, for
+ * whichever account [getAccessToken] is asked about. Never reads or writes `auth_config`: in this
+ * mode knurl holds no Instagram credential of its own and renews nothing.
  *
- * The broker request now carries an explicit account id per call - a change from standalone
- * Knurl's original one-account-per-process shape, where the authenticated job identity alone was
- * enough to imply the account. A broker serving an account-agnostic ingestion deployment must
- * therefore accept one bearer token authorizing lookups for multiple accounts and dispatch its
- * response by the requested account id; this is a breaking change to any existing broker
- * implementation built against the single-account contract.
+ * The request carries an explicit account id per call - a change from standalone Knurl's original
+ * one-account-per-process shape, where the authenticated job identity alone was enough to imply the
+ * account. A credential service serving an account-agnostic ingestion deployment must therefore
+ * accept one bearer token authorizing lookups for multiple accounts and dispatch its response by
+ * the requested account id.
  */
 class HttpBrokerInstagramAccessTokenProvider(
     private val okHttpClient: OkHttpClient,
@@ -99,7 +100,7 @@ class HttpBrokerInstagramAccessTokenProvider(
     allowPlaintextHttp: Boolean,
     private val clock: Clock = Clock.systemUTC(),
 ) : InstagramAccessTokenProvider {
-    private val endpoint = validateBrokerEndpoint(endpointUrl, allowPlaintextHttp)
+    private val endpoint = validateCredentialEndpoint(endpointUrl, allowPlaintextHttp, ENDPOINT_DESCRIPTION)
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun getAccessToken(accountId: String): String {
@@ -116,45 +117,43 @@ class HttpBrokerInstagramAccessTokenProvider(
             try {
                 okHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        throw CredentialBrokerException("returned HTTP ${response.code}")
+                        throw CredentialHttpException("returned HTTP ${response.code}")
                     }
-                    val body = response.body ?: throw CredentialBrokerException("returned an empty response")
+                    val body = response.body ?: throw CredentialHttpException("returned an empty response")
                     readBoundedBody(body)
                 }
-            } catch (exception: CredentialBrokerException) {
+            } catch (exception: CredentialHttpException) {
                 throw exception
             } catch (_: IOException) {
-                throw CredentialBrokerException("request failed")
+                throw CredentialHttpException("request failed")
             }
 
         val credential =
             try {
                 json.decodeFromString<BrokerCredentialResponse>(responseBody)
             } catch (_: SerializationException) {
-                throw CredentialBrokerException("returned malformed JSON")
+                throw CredentialHttpException("returned malformed JSON")
             }
 
         if (credential.instagramAccountId != accountId) {
-            throw CredentialBrokerException("returned credentials for an unexpected Instagram account")
+            throw CredentialHttpException("returned credentials for an unexpected Instagram account")
         }
-        val accessToken = credential.accessToken.validBrokerAccessToken()
+        val accessToken = credential.accessToken.validCredentialValue("Instagram access token")
         val expiresAt =
             try {
                 Instant.parse(credential.expiresAt)
             } catch (_: RuntimeException) {
-                throw CredentialBrokerException("returned an invalid token expiry")
+                throw CredentialHttpException("returned an invalid token expiry")
             }
         if (!expiresAt.isAfter(Instant.now(clock).plus(TOKEN_REFRESH_THRESHOLD))) {
-            throw CredentialBrokerException("returned a token expiring within 24 hours")
+            throw CredentialHttpException("returned a token expiring within 24 hours")
         }
 
         return accessToken
     }
 }
 
-class CredentialBrokerException internal constructor(
-    reason: String,
-) : IOException("Credential broker $reason")
+private const val ENDPOINT_DESCRIPTION = "CREDENTIALS_HTTP_URL"
 
 @Serializable
 private class BrokerCredentialResponse(
@@ -164,148 +163,51 @@ private class BrokerCredentialResponse(
 )
 
 fun createInstagramAccessTokenProvider(
-    settings: InstagramSettings,
+    instagram: InstagramSettings,
+    credentials: CredentialsSettings,
     authConfigStore: AuthConfigStore,
     refreshToken: (String) -> TokenRefreshResult,
     okHttpClient: OkHttpClient,
     clock: Clock = Clock.systemUTC(),
 ): InstagramAccessTokenProvider {
-    validateInstagramCredentialSettings(settings)
-    return when (settings.credentialProvider) {
-        InstagramCredentialProviderType.DATABASE -> {
+    validateCredentialsSettings(instagram, credentials)
+    return when (credentials.mode) {
+        CredentialsMode.LOCAL -> {
             DatabaseInstagramAccessTokenProvider(
                 authConfigStore = authConfigStore,
-                seedAccountId = settings.businessAccountId,
-                seedAccessToken = checkNotNull(settings.accessToken).trim(),
+                seedAccountId = instagram.businessAccountId,
+                seedAccessToken = checkNotNull(instagram.accessToken).trim(),
                 refreshToken = refreshToken,
                 clock = clock,
             )
         }
 
-        InstagramCredentialProviderType.HTTP_BROKER -> {
-            val broker = settings.credentialBroker
+        CredentialsMode.HTTP -> {
             HttpBrokerInstagramAccessTokenProvider(
                 okHttpClient = okHttpClient,
-                endpointUrl = broker.url.requireNonBlank("Instagram credential broker URL"),
-                bearerTokenSource = createBrokerBearerTokenSource(broker),
-                allowPlaintextHttp = broker.allowPlaintextHttp,
+                endpointUrl = credentials.http.url.requireNonBlank(ENDPOINT_DESCRIPTION),
+                bearerTokenSource =
+                    createBearerTokenSource(
+                        credentials.http.authorizationToken,
+                        credentials.http.authorizationTokenFile,
+                    ),
+                allowPlaintextHttp = credentials.http.allowPlaintext,
                 clock = clock,
             )
         }
     }
 }
 
-fun validateInstagramCredentialSettings(settings: InstagramSettings) {
-    when (settings.credentialProvider) {
-        InstagramCredentialProviderType.DATABASE -> {
-            settings.accessToken.requireValidSecret("Instagram access token")
-        }
-
-        InstagramCredentialProviderType.HTTP_BROKER -> {
-            val broker = settings.credentialBroker
-            validateBrokerEndpoint(
-                broker.url.requireNonBlank("Instagram credential broker URL"),
-                broker.allowPlaintextHttp,
-            )
-            createBrokerBearerTokenSource(broker)
-        }
+/**
+ * Fails a misconfigured deployment at startup, before a datasource is opened - a credential URL
+ * typo should not first surface minutes into a sync cycle as a failed download.
+ */
+fun validateCredentialsSettings(
+    instagram: InstagramSettings,
+    credentials: CredentialsSettings,
+) {
+    when (credentials.mode) {
+        CredentialsMode.LOCAL -> instagram.accessToken.requireValidSecret("INSTAGRAM_ACCESS_TOKEN")
+        CredentialsMode.HTTP -> credentials.validateHttpSettings()
     }
-}
-
-internal fun createBrokerBearerTokenSource(settings: CredentialBrokerSettings): () -> String {
-    val inlineToken = settings.bearerToken?.takeIf { it.isNotBlank() }
-    val tokenFile = settings.bearerTokenFile?.takeIf { it.isNotBlank() }
-    require((inlineToken == null) != (tokenFile == null)) {
-        "HTTP_BROKER requires exactly one of INSTAGRAM_CREDENTIAL_BROKER_TOKEN or " +
-            "INSTAGRAM_CREDENTIAL_BROKER_TOKEN_FILE"
-    }
-
-    return if (inlineToken != null) {
-        val validatedToken = inlineToken.requireValidSecret("bearer token")
-        val source = { validatedToken }
-        source
-    } else {
-        val path = Path.of(checkNotNull(tokenFile))
-        val source = { readBoundedTokenFile(path) }
-        source
-    }
-}
-
-private fun validateBrokerEndpoint(
-    configuredUrl: String,
-    allowPlaintextHttp: Boolean,
-): HttpUrl {
-    val endpoint = configuredUrl.toHttpUrlOrNull() ?: throw IllegalArgumentException("Invalid Instagram credential broker URL")
-    require(endpoint.username.isEmpty() && endpoint.password.isEmpty()) {
-        "Instagram credential broker URL must not contain user information"
-    }
-    require(endpoint.query == null && endpoint.fragment == null) {
-        "Instagram credential broker URL must not contain a query string or fragment"
-    }
-
-    val isLoopback =
-        endpoint.host == "localhost" ||
-            endpoint.host.endsWith(".localhost") ||
-            endpoint.host.startsWith("127.") ||
-            endpoint.host == "::1" ||
-            endpoint.host == "0:0:0:0:0:0:0:1"
-    require(endpoint.isHttps || (endpoint.scheme == "http" && (isLoopback || allowPlaintextHttp))) {
-        "Instagram credential broker URL must use HTTPS; set " +
-            "INSTAGRAM_CREDENTIAL_BROKER_ALLOW_PLAINTEXT_HTTP=true only on a trusted private network"
-    }
-    return endpoint
-}
-
-private fun readBoundedBody(body: okhttp3.ResponseBody): String {
-    if (body.contentLength() > MAX_CREDENTIAL_BYTES) {
-        throw CredentialBrokerException("response exceeded 16 KiB")
-    }
-    val source = body.source()
-    if (source.request(MAX_CREDENTIAL_BYTES.toLong() + 1)) {
-        throw CredentialBrokerException("response exceeded 16 KiB")
-    }
-    return source.readString(StandardCharsets.UTF_8)
-}
-
-private fun readBoundedTokenFile(path: Path): String {
-    val bytes =
-        try {
-            Files.newInputStream(path).use { input -> input.readNBytes(MAX_CREDENTIAL_BYTES + 1) }
-        } catch (_: IOException) {
-            throw CredentialBrokerException("could not read its bearer-token file")
-        }
-    if (bytes.size > MAX_CREDENTIAL_BYTES) {
-        throw CredentialBrokerException("bearer-token file exceeded 16 KiB")
-    }
-    val token = bytes.toString(StandardCharsets.UTF_8).trim()
-    if (token.isEmpty()) {
-        throw CredentialBrokerException("bearer-token file was blank")
-    }
-    return token
-}
-
-private fun String.validBrokerAccessToken(): String {
-    val value = trim()
-    if (value.isEmpty()) {
-        throw CredentialBrokerException("returned a blank Instagram access token")
-    }
-    if (value.toByteArray(StandardCharsets.UTF_8).size > MAX_CREDENTIAL_BYTES) {
-        throw CredentialBrokerException("returned an Instagram access token exceeding 16 KiB")
-    }
-    return value
-}
-
-private fun String?.requireValidSecret(description: String): String {
-    val value = this?.trim().orEmpty()
-    require(value.isNotEmpty()) { "$description must not be blank" }
-    require(value.toByteArray(StandardCharsets.UTF_8).size <= MAX_CREDENTIAL_BYTES) {
-        "$description must not exceed 16 KiB"
-    }
-    return value
-}
-
-private fun String?.requireNonBlank(description: String): String {
-    val value = this?.trim().orEmpty()
-    require(value.isNotEmpty()) { "$description must not be blank" }
-    return value
 }
