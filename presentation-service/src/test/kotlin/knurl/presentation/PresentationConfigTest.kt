@@ -2,6 +2,7 @@ package knurl.presentation
 
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
+import io.kotest.matchers.shouldBe
 import knurl.domain.config.CredentialsHttpSettings
 import knurl.domain.config.CredentialsMode
 import knurl.domain.config.CredentialsSettings
@@ -109,8 +110,8 @@ class PresentationConfigTest :
             }
         }
 
-        // The bundled application-local.conf ships inside the jar and always supplies this block, so
-        // rejecting it in HTTP mode would make every HTTP-mode deployment fail to start.
+        // Ignored rather than rejected: flipping this would stop any existing HTTP deployment still
+        // setting ADMIN_TOKEN/READ_TOKEN from booting. See PresentationConfig's init block.
         test("HTTP mode ignores a populated local block rather than failing to start") {
             testConfig(credentials = httpCredentials(), local = LOCAL)
         }
@@ -121,6 +122,14 @@ class PresentationConfigTest :
 
         test("accepts HTTP mode with an endpoint and a secret") {
             testConfig(credentials = httpCredentials(), local = null)
+        }
+
+        // The dev defaults in config/application-local.conf are the lowest-priority config layer, so
+        // anything they supply silently backfills a value the environment was supposed to set. If they
+        // ever return to src/main/resources they ship inside the jar and image, and this service starts
+        // accepting the checked-in dev ADMIN_TOKEN/READ_TOKEN in a real deployment.
+        test("dev defaults are not packaged on the classpath") {
+            PresentationConfig::class.java.getResource("/application-local.conf") shouldBe null
         }
 
         test("HTTP mode requires an endpoint URL") {

@@ -165,7 +165,13 @@ private class BrokerCredentialResponse(
 fun createInstagramAccessTokenProvider(
     instagram: InstagramSettings,
     credentials: CredentialsSettings,
-    authConfigStore: AuthConfigStore,
+    /**
+     * Nullable because `HTTP` mode has no store to give: no cipher, no encryption key, no
+     * `auth_config` access at all (see [HttpBrokerInstagramAccessTokenProvider]). Kept as a parameter
+     * rather than pushed into the `LOCAL` branch's own factory so a caller can still hand this
+     * function a store in `HTTP` mode and assert it is never touched.
+     */
+    authConfigStore: AuthConfigStore?,
     refreshToken: (String) -> TokenRefreshResult,
     okHttpClient: OkHttpClient,
     clock: Clock = Clock.systemUTC(),
@@ -174,7 +180,7 @@ fun createInstagramAccessTokenProvider(
     return when (credentials.mode) {
         CredentialsMode.LOCAL -> {
             DatabaseInstagramAccessTokenProvider(
-                authConfigStore = authConfigStore,
+                authConfigStore = checkNotNull(authConfigStore) { "CREDENTIALS_MODE=LOCAL requires an AuthConfigStore" },
                 seedAccountId = instagram.businessAccountId,
                 seedAccessToken = checkNotNull(instagram.accessToken).trim(),
                 refreshToken = refreshToken,

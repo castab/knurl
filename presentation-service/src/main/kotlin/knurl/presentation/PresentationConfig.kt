@@ -43,11 +43,13 @@ data class PresentationConfig(
         }
         require(rateLimitPerMinute > 0) { "rateLimitPerMinute must be positive, was $rateLimitPerMinute" }
 
-        // HTTP mode ignores [local] rather than rejecting it. It cannot do otherwise: the bundled
-        // application-local.conf ships inside the jar and always supplies dev values for this block,
-        // so "the operator set ADMIN_TOKEN" is indistinguishable here from "the dev defaults loaded".
-        // Rejecting would make every HTTP-mode deployment fail to start. [knurl.presentation.main]
-        // warns when a value is present and ignored, which is the honest version of this.
+        // HTTP mode ignores [local] rather than rejecting it. This used to be forced: application-local.conf
+        // shipped inside the jar and always supplied dev values for this block, so "the operator set
+        // ADMIN_TOKEN" was indistinguishable here from "the dev defaults loaded". That file is now
+        // read from disk and never packaged, so a populated block genuinely means the operator set it
+        // and rejecting would be possible. It stays a warning deliberately: rejecting is a behaviour
+        // change that would stop any existing HTTP deployment still setting these from booting.
+        // [knurl.presentation.main] warns when a value is present and ignored.
         if (credentials.mode == CredentialsMode.LOCAL) {
             requireNotNull(local) {
                 "CREDENTIALS_MODE=LOCAL requires INSTAGRAM_BUSINESS_ACCOUNT_ID, ADMIN_TOKEN and READ_TOKEN"

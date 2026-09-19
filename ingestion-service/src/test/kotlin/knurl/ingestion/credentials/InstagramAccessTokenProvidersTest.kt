@@ -383,6 +383,33 @@ class InstagramAccessTokenProvidersTest :
             provider::class shouldBe HttpBrokerInstagramAccessTokenProvider::class
         }
 
+        test("HTTP mode needs no auth_config store at all") {
+            val provider =
+                createInstagramAccessTokenProvider(
+                    instagram = InstagramSettings(businessAccountId = "account-1"),
+                    credentials = httpCredentials(),
+                    authConfigStore = null,
+                    refreshToken = { error("HTTP mode must not refresh through MetaGraphClient") },
+                    okHttpClient = OkHttpClient(),
+                    clock = FIXED_CLOCK,
+                )
+
+            provider::class shouldBe HttpBrokerInstagramAccessTokenProvider::class
+        }
+
+        test("LOCAL mode without an auth_config store fails loudly") {
+            shouldThrow<IllegalStateException> {
+                createInstagramAccessTokenProvider(
+                    instagram = localSettings(),
+                    credentials = CredentialsSettings(),
+                    authConfigStore = null,
+                    refreshToken = { TokenRefreshResult("refreshed", NOW.plusSeconds(100_000)) },
+                    okHttpClient = OkHttpClient(),
+                    clock = FIXED_CLOCK,
+                )
+            }
+        }
+
         test("validation accepts private-network HTTP only with explicit opt-in") {
             val plaintext = httpCredentials(url = "http://credentials.internal/v1/credentials")
 

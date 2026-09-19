@@ -37,6 +37,7 @@ import org.http4k.routing.routes
 import org.http4k.routing.static
 import org.http4k.server.Undertow
 import org.http4k.server.asServer
+import java.io.File
 import java.time.Duration
 import java.util.concurrent.TimeUnit
 
@@ -66,8 +67,14 @@ fun main() {
             // ${?VAR} substitution) outrank the dev defaults below. When a ${?VAR} is unset the key is
             // dropped from this source entirely, so local development still falls through to
             // application-local.conf. Do not reorder these two lines.
+            //
+            // `application.conf` is the ONLY config file packaged into the jar/image. The dev defaults
+            // below are read from disk, relative to the Gradle `run` task's working directory
+            // (`presentation-service/`), so they cannot follow the artifact into a deployment and silently
+            // backfill a value the environment was supposed to supply - which for this service means dev
+            // ADMIN_TOKEN/READ_TOKEN placeholders standing in for real ones.
             .addPropertySource(PropertySource.resource("/application.conf"))
-            .addPropertySource(PropertySource.resource("/application-local.conf", optional = true))
+            .addPropertySource(PropertySource.file(File("config/application-local.conf"), optional = true))
             .build()
             .loadConfigOrThrow<PresentationConfig>()
 
