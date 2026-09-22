@@ -57,6 +57,7 @@ private data class GalleryPostRow(
     val createdAt: Instant,
     val viewCount: Int,
     val clickCount: Int,
+    val sortOrder: Long?,
 ) {
     fun toDomain(
         galleryId: Uuid,
@@ -79,6 +80,7 @@ private data class GalleryPostRow(
                 ),
             viewCount = viewCount,
             clickCount = clickCount,
+            sortOrder = sortOrder,
         )
 }
 
@@ -279,15 +281,16 @@ class GalleryRepository(
      * that, so an item added moments ago is simply absent until ingestion fetches it. `publishedCount`
      * on the gallery itself is how an admin sees that gap rather than guessing at it.
      *
-     * Both orderings tiebreak on `gi.instagram_media_id`, not `p.id`. Within a fixed `gallery_id`
+     * All orderings tiebreak on `gi.instagram_media_id`, not `p.id`. Within a fixed `gallery_id`
      * the media id is unique (it is the other half of the primary key), so it is a valid total order
      * *and* it keeps `idx_gallery_items_views` able to serve the whole `sort=views` ordering. A `p.id`
      * tiebreaker would quietly make that index useless.
      *
-     * Note that `sort=recent` orders by a column on `instagram_posts` while filtering on
-     * `gallery_items`, so no single index can serve it: expect a join plus a sort of the gallery per
-     * page. That is fine at the sizes galleries actually reach, but it is a real change from the
-     * pure index scan the single-gallery query used to get.
+     * `sort=recent` and the timestamp fallback in `sort=curated` order by a column on
+     * `instagram_posts` while filtering on `gallery_items`, so no single index can serve the whole
+     * ordering: expect a join plus a sort of the gallery per page. That is fine at the sizes
+     * galleries actually reach, but it is a real change from the pure index scan the single-gallery
+     * query used to get.
      */
     fun findContentPage(
         galleryId: Uuid,
@@ -297,6 +300,7 @@ class GalleryRepository(
     ): Page<GalleryPost> {
         val orderByClause =
             when (sort) {
+                SortOrder.CURATED -> "gi.sort_order ASC NULLS LAST, p.timestamp DESC, gi.instagram_media_id"
                 SortOrder.RECENT -> "p.timestamp DESC, gi.instagram_media_id"
                 SortOrder.VIEWS -> "gi.view_count DESC, gi.instagram_media_id"
             }
@@ -322,7 +326,7 @@ class GalleryRepository(
                             """
                             SELECT p.id, p.instagram_account_id, p.instagram_media_id, p.media_type,
                                    p.caption, p.permalink, p.timestamp, p.is_pinned, p.created_at,
-                                   gi.view_count, gi.click_count
+                                   gi.view_count, gi.click_count, gi.sort_order
                             FROM gallery_items gi
                             JOIN instagram_posts p ON p.instagram_media_id = gi.instagram_media_id
                             WHERE gi.gallery_id = :galleryId
@@ -353,7 +357,7 @@ class GalleryRepository(
     }
 
     /**
-     * Adds and removes gallery members by shortcode, maintaining the deletion clock as it goes.
+     * Adds, removes, and ranks gallery members by shortcode, maintaining the deletion clock as it goes.
      * Returns null if the gallery isn't this account's.
      *
      * **The catalog row lock at the top is not optional.** Without it, two admins removing the same
@@ -381,6 +385,7 @@ class GalleryRepository(
         galleryId: Uuid,
         add: Set<String>,
         remove: Set<String>,
+        sortOrders: Map<String, Long?>,
     ): GalleryItemsResult? =
         jdbi.inTransaction<GalleryItemsResult?, Exception> { handle ->
             val ownsGallery =
@@ -393,10 +398,11 @@ class GalleryRepository(
                     .isPresent
             if (!ownsGallery) return@inTransaction null
 
-            lockCatalogRows(handle, accountId, add + remove)
+            lockCatalogRows(handle, accountId, add + remove + sortOrders.keys)
 
             val added = if (add.isEmpty()) emptyList() else addItems(handle, accountId, galleryId, add)
             val removed = if (remove.isEmpty()) emptyList() else removeItems(handle, accountId, galleryId, remove)
+            val sortOrdersUpdated = updateSortOrders(handle, accountId, galleryId, sortOrders)
 
             if (added.isNotEmpty()) {
                 handle
@@ -412,12 +418,13 @@ class GalleryRepository(
 
             stampOrphanedItems(handle, removed.map { it.instagramMediaId })
 
-            val resolved = added.map { it.shortcode }.toSet() + removed.map { it.shortcode }.toSet()
+            val resolved = added.map { it.shortcode }.toSet() + removed.map { it.shortcode }.toSet() + sortOrdersUpdated
             GalleryItemsResult(
                 added = added.filter { it.inserted }.map { it.shortcode }.toSet(),
                 alreadyPresent = added.filterNot { it.inserted }.map { it.shortcode }.toSet(),
                 removed = removed.map { it.shortcode }.toSet(),
-                notFound = (add + remove) - resolved,
+                sortOrdersUpdated = sortOrdersUpdated,
+                notFound = (add + remove + sortOrders.keys) - resolved,
             )
         }
 
@@ -476,6 +483,42 @@ class GalleryRepository(
             .bindArray("shortcodes", String::class.java, shortcodes)
             .mapTo<RemovedRow>()
             .list()
+
+    /**
+     * Applies ranks after inserts so one bounded request can add an item and position it atomically.
+     * A target must already be a member (or have been added above); otherwise it is reported as not
+     * found, which keeps rank writes from revealing another account's catalog entries.
+     */
+    private fun updateSortOrders(
+        handle: Handle,
+        accountId: String,
+        galleryId: Uuid,
+        sortOrders: Map<String, Long?>,
+    ): Set<String> =
+        sortOrders
+            .mapNotNull { (shortcode, sortOrder) ->
+                handle
+                    .createQuery(
+                        """
+                        UPDATE gallery_items gi
+                        SET sort_order = :sortOrder
+                        FROM galleries g, instagram_media_catalog c
+                        WHERE gi.gallery_id = :galleryId
+                          AND g.id = gi.gallery_id
+                          AND g.instagram_account_id = :accountId
+                          AND c.instagram_media_id = gi.instagram_media_id
+                          AND c.instagram_account_id = g.instagram_account_id
+                          AND c.shortcode = :shortcode
+                        RETURNING c.shortcode
+                        """.trimIndent(),
+                    ).bind("sortOrder", sortOrder)
+                    .bind("galleryId", galleryId)
+                    .bind("accountId", accountId)
+                    .bind("shortcode", shortcode)
+                    .mapTo<String>()
+                    .findFirst()
+                    .orElse(null)
+            }.toSet()
 
     /**
      * Deletes a gallery and reports what that cost, or null if it isn't this account's.

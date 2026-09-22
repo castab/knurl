@@ -60,7 +60,10 @@ private fun testMediaItem(
  * derived from an item, so every test below can rely on it never leaking back into
  * [GalleryMediaItemResponse.mediaType], which must always carry that item's own value.
  */
-private fun testPost(mediaItems: List<PostMediaItem>): GalleryPost {
+private fun testPost(
+    mediaItems: List<PostMediaItem>,
+    sortOrder: Long? = null,
+): GalleryPost {
     val postId = mediaItems.firstOrNull()?.postId ?: Uuid.random()
     return GalleryPost(
         galleryId = Uuid.random(),
@@ -77,6 +80,7 @@ private fun testPost(mediaItems: List<PostMediaItem>): GalleryPost {
             ),
         viewCount = 0,
         clickCount = 0,
+        sortOrder = sortOrder,
     )
 }
 
@@ -220,5 +224,13 @@ class GalleryItemMappingTest :
             val expiresAt = Instant.parse(response.mediaItems.single().mediaUrlExpiresAt)
             (expiresAt >= before.plus(ttl).minusSeconds(2)) shouldBe true
             (expiresAt <= after.plus(ttl).plusSeconds(2)) shouldBe true
+        }
+
+        test("preserves the gallery's curator rank") {
+            val postId = Uuid.random()
+
+            val response = testPost(listOf(testMediaItem(postId, position = 0)), sortOrder = 7).toResponse(testPresigner())
+
+            response.sortOrder shouldBe 7
         }
     })

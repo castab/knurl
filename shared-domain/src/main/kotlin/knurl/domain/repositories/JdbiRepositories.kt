@@ -871,6 +871,7 @@ private fun Query.bindCatalogFilter(filter: CatalogFilter): Query {
 private data class MembershipRow(
     val instagramMediaId: String,
     val galleryId: Uuid,
+    val sortOrder: Long?,
 )
 
 /** One `RETURNING` row from [CatalogRepository.requestPurge] - the shortcode plus whether it had anything downloaded. */
@@ -1041,16 +1042,26 @@ class CatalogRepository(
                 if (entries.isEmpty()) {
                     emptyList()
                 } else {
-                    val galleriesByMedia =
+                    val membershipsByMedia =
                         handle
                             .createQuery(
-                                "SELECT instagram_media_id, gallery_id FROM gallery_items WHERE instagram_media_id IN (<ids>)",
+                                "SELECT instagram_media_id, gallery_id, sort_order FROM gallery_items WHERE instagram_media_id IN (<ids>)",
                             ).bindList("ids", entries.map { it.instagramMediaId })
                             .mapTo<MembershipRow>()
                             .list()
-                            .groupBy({ it.instagramMediaId }, { it.galleryId })
+                            .groupBy { it.instagramMediaId }
 
-                    entries.map { it.copy(galleryIds = galleriesByMedia[it.instagramMediaId].orEmpty()) }
+                    entries.map { entry ->
+                        val memberships = membershipsByMedia[entry.instagramMediaId].orEmpty()
+                        entry.copy(
+                            galleryIds = memberships.map { it.galleryId },
+                            gallerySortOrders =
+                                memberships
+                                    .mapNotNull { membership ->
+                                        membership.sortOrder?.let { membership.galleryId to it }
+                                    }.toMap(),
+                        )
+                    }
                 }
             }
         }

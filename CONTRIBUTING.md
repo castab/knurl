@@ -26,11 +26,9 @@ for getting a working local environment (JDK 25, Postgres 18+, the bundled Gradl
    ```bash
    ./gradlew :presentation-service:generateOpenApiSpec
    ```
-5. **If you changed the database schema**, check whether this project is still in the
-   no-production-data phase README.md's "Local development with Docker Compose" section describes -
-   if so, fold the change into `V1__init_instagram_aggregator.sql` rather than adding a new
-   migration file, and note in your PR that `docker compose down -v` (or an equivalent reset on any
-   deployed database) is needed.
+5. **If you changed the database schema**, add the next ordered Flyway migration under
+   `shared-domain/src/main/resources/db/migration`. `V1__init_instagram_aggregator.sql` is immutable;
+   never rewrite it or require a database reset for a normal schema change.
 6. Run the full check locally before opening a PR:
    ```bash
    ./gradlew build

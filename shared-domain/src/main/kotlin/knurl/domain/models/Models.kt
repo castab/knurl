@@ -61,6 +61,8 @@ data class GalleryPost(
     val post: InstagramPost,
     val viewCount: Int,
     val clickCount: Int,
+    /** Curator-defined ascending rank in this gallery, or null for timestamp-based placement. */
+    val sortOrder: Long?,
 )
 
 /** Result of [knurl.domain.repositories.GalleryRepository.updateItems]. */
@@ -68,6 +70,7 @@ data class GalleryItemsResult(
     val added: Set<String>,
     val alreadyPresent: Set<String>,
     val removed: Set<String>,
+    val sortOrdersUpdated: Set<String>,
     val notFound: Set<String>,
 )
 
@@ -186,6 +189,8 @@ data class CatalogEntry(
      * gathers its [PostMediaItem]s.
      */
     val galleryIds: List<Uuid> = emptyList(),
+    /** Explicit curator ranks keyed by gallery id; absent means timestamp-based placement. */
+    val gallerySortOrders: Map<Uuid, Long> = emptyMap(),
 )
 
 /**
@@ -284,6 +289,7 @@ data class CatalogFilter(
 )
 
 enum class SortOrder {
+    CURATED,
     RECENT,
     VIEWS,
     ;
@@ -291,7 +297,8 @@ enum class SortOrder {
     companion object {
         fun fromQueryParam(raw: String?): SortOrder =
             when (raw?.lowercase()) {
-                null, "recent" -> RECENT
+                null, "curated" -> CURATED
+                "recent" -> RECENT
                 "views" -> VIEWS
                 else -> throw IllegalArgumentException("Unsupported sort value: $raw")
             }

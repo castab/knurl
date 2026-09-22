@@ -31,6 +31,8 @@ data class AdminCatalogItemResponse(
     val timestamp: String,
     /** Every gallery this item currently belongs to, by id. Empty means it is in none. */
     val galleryIds: List<String>,
+    /** Explicit curator ranks keyed by gallery id; omitted memberships follow timestamp-based placement. */
+    val gallerySortOrders: Map<String, Long> = emptyMap(),
     /**
      * Null for a normal, downloadable item. Non-null (currently only `"copyright"`) means
      * ingestion-service determined the underlying media can never be fetched via the Graph API -
@@ -147,6 +149,7 @@ private val EXAMPLE_CATALOG_ITEM =
         permalink = "https://www.instagram.com/p/Cabc123XYZ/",
         timestamp = "2024-01-01T00:00:00Z",
         galleryIds = listOf("01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f"),
+        gallerySortOrders = mapOf("01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" to 0),
         notDigestibleReason = "copyright",
         thumbnailUrl = "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
         deselectedAt = "2024-01-02T00:00:00Z",
@@ -161,6 +164,7 @@ internal fun CatalogEntry.toResponse(presigner: Presigner): AdminCatalogItemResp
         permalink = permalink,
         timestamp = timestamp.toString(),
         galleryIds = galleryIds.map { it.toString() },
+        gallerySortOrders = gallerySortOrders.mapKeys { (galleryId, _) -> galleryId.toString() },
         notDigestibleReason = notDigestibleReason,
         thumbnailUrl = thumbnailPath?.let { presigner.presignGet(it).url },
         deselectedAt = deselectedAt?.toString(),
