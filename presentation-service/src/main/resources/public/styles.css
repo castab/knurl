@@ -306,6 +306,10 @@ main {
   gap: 0.4rem;
 }
 
+.select-row input[type="number"] {
+  max-width: 10rem;
+}
+
 /* Deliberately understated: a destructive action should be findable but not invite a stray click,
    which is also why it is confirmed before it fires. */
 .link-button {

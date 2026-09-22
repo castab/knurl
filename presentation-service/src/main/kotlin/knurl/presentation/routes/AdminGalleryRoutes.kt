@@ -26,6 +26,10 @@ data class GalleryWriteRequest(
 data class GalleryItemsRequest(
     val add: List<String> = emptyList(),
     val remove: List<String> = emptyList(),
+    /** Lower values appear first in curated order. */
+    val sortOrders: Map<String, Long> = emptyMap(),
+    /** Removes explicit ranks so items return to timestamp-based placement. */
+    val clearSortOrders: List<String> = emptyList(),
 )
 
 /**
@@ -39,6 +43,7 @@ data class GalleryItemsResponse(
     val added: List<String>,
     val alreadyPresent: List<String>,
     val removed: List<String>,
+    val sortOrdersUpdated: List<String>,
     val notFound: List<String>,
 )
 
@@ -61,6 +66,44 @@ data class GalleryDeleteResponse(
  * gives [MAX_PURGE_BATCH] its bound.
  */
 internal const val MAX_GALLERY_ITEMS_BATCH = 100
+
+internal data class GalleryItemsMutation(
+    val add: Set<String>,
+    val remove: Set<String>,
+    val sortOrders: Map<String, Long?>,
+)
+
+/** Validates one bounded, atomic membership-and-ranking request before it reaches the repository. */
+internal fun validatedGalleryItemsMutation(request: GalleryItemsRequest): GalleryItemsMutation {
+    val add = request.add.toSet()
+    val remove = request.remove.toSet()
+    val explicitSortOrders = request.sortOrders.toSortedMap()
+    val clearSortOrders = request.clearSortOrders.toSet()
+    val sortOrders = (explicitSortOrders + clearSortOrders.associateWith { null }).toSortedMap()
+    val addRemoveOverlap = add intersect remove
+    val removeRankOverlap = remove intersect sortOrders.keys
+    val setClearOverlap = explicitSortOrders.keys intersect clearSortOrders
+    val total = (add + remove + sortOrders.keys).size
+
+    require(addRemoveOverlap.isEmpty()) {
+        "shortcodes cannot be both added and removed: ${addRemoveOverlap.sorted()}"
+    }
+    require(removeRankOverlap.isEmpty()) {
+        "shortcodes cannot be both removed and ranked: ${removeRankOverlap.sorted()}"
+    }
+    require(setClearOverlap.isEmpty()) {
+        "shortcodes cannot be both ranked and cleared: ${setClearOverlap.sorted()}"
+    }
+    require(explicitSortOrders.values.none { it < 0 }) {
+        "sort orders must be zero or greater"
+    }
+    require(total > 0) { "add, remove, sortOrders, and clearSortOrders cannot all be empty" }
+    require(total <= MAX_GALLERY_ITEMS_BATCH) {
+        "at most $MAX_GALLERY_ITEMS_BATCH shortcodes per request, got $total"
+    }
+
+    return GalleryItemsMutation(add, remove, sortOrders)
+}
 
 /**
  * Admin CRUD for an account's galleries, plus the membership curation that replaced the old single
@@ -246,8 +289,8 @@ class AdminGalleryRoutes(
         }
 
     /**
-     * Adds and removes members by shortcode - the human-facing identifier admins work with, matching
-     * every other admin surface.
+     * Adds, removes, and ranks members by shortcode - the human-facing identifier admins work with,
+     * matching every other admin surface.
      *
      * A shortcode in both lists is a 400 rather than a silently-resolved race: the request does not
      * say what was meant, and guessing an order would make the outcome depend on an implementation
@@ -255,11 +298,16 @@ class AdminGalleryRoutes(
      */
     private fun updateItems(): ContractRoute =
         "/api/v1/admin/accounts" / accountIdPath / "galleries" / galleryIdPath / "items" meta {
-            summary = "Add or remove a gallery's items by shortcode"
+            summary = "Add, remove, or rank a gallery's items by shortcode"
             security = adminBearerSecurity
             receiving(
                 galleryItemsRequestLens to
-                    GalleryItemsRequest(add = listOf("Cabc123XYZ"), remove = listOf("Cdef456UVW")),
+                    GalleryItemsRequest(
+                        add = listOf("Cabc123XYZ"),
+                        remove = listOf("Cdef456UVW"),
+                        sortOrders = mapOf("Cabc123XYZ" to 0),
+                        clearSortOrders = listOf("Cghi789RST"),
+                    ),
             )
             returning(
                 Status.OK,
@@ -268,6 +316,7 @@ class AdminGalleryRoutes(
                         added = listOf("Cabc123XYZ"),
                         alreadyPresent = listOf("Cghi789RST"),
                         removed = listOf("Cdef456UVW"),
+                        sortOrdersUpdated = listOf("Cabc123XYZ", "Cghi789RST"),
                         notFound = listOf("Cjkl012MNO"),
                     ),
             )
@@ -276,26 +325,19 @@ class AdminGalleryRoutes(
                 authorizeAccount(accountId, request, verifyAdminToken) {
                     withGalleryId(rawGalleryId) { galleryId ->
                         val body = galleryItemsRequestLens(request)
-                        val addSet = body.add.toSet()
-                        val removeSet = body.remove.toSet()
-                        val overlap = addSet intersect removeSet
-                        val total = addSet.size + removeSet.size
-
-                        when {
-                            overlap.isNotEmpty() -> {
-                                badRequest("shortcodes cannot be both added and removed: ${overlap.sorted()}")
-                            }
-
-                            total == 0 -> {
-                                badRequest("add and remove cannot both be empty")
-                            }
-
-                            total > MAX_GALLERY_ITEMS_BATCH -> {
-                                badRequest("at most $MAX_GALLERY_ITEMS_BATCH shortcodes per request, got $total")
-                            }
-
-                            else -> {
-                                val result = galleryRepository.updateItems(accountId, galleryId, addSet, removeSet)
+                        runCatching { validatedGalleryItemsMutation(body) }.fold(
+                            onFailure = { failure ->
+                                badRequest(failure.message ?: "invalid gallery item mutation")
+                            },
+                            onSuccess = { mutation ->
+                                val result =
+                                    galleryRepository.updateItems(
+                                        accountId,
+                                        galleryId,
+                                        mutation.add,
+                                        mutation.remove,
+                                        mutation.sortOrders,
+                                    )
                                 if (result == null) {
                                     notFound()
                                 } else {
@@ -305,12 +347,13 @@ class AdminGalleryRoutes(
                                                 added = result.added.sorted(),
                                                 alreadyPresent = result.alreadyPresent.sorted(),
                                                 removed = result.removed.sorted(),
+                                                sortOrdersUpdated = result.sortOrdersUpdated.sorted(),
                                                 notFound = result.notFound.sorted(),
                                             ),
                                     )
                                 }
-                            }
-                        }
+                            },
+                        )
                     }
                 }
             }

@@ -88,7 +88,7 @@
     },
     "/api/v1/accounts/{accountId}/galleries/by-name/{name}" : {
       "get" : {
-        "summary" : "Look up a page of one gallery's posts by name, sorted by recency or view count",
+        "summary" : "Look up a page of one gallery's posts by name, sorted by curator rank, recency, or view count",
         "description" : null,
         "tags" : [ "" ],
         "parameters" : [ {
@@ -169,7 +169,8 @@
                       "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
                     } ],
                     "viewCount" : 0,
-                    "clickCount" : 0
+                    "clickCount" : 0,
+                    "sortOrder" : 0
                   } ],
                   "pagination" : {
                     "totalRecords" : 100,
@@ -203,7 +204,7 @@
     },
     "/api/v1/accounts/{accountId}/galleries/{galleryId}" : {
       "get" : {
-        "summary" : "List a page of one gallery's posts, sorted by recency or view count",
+        "summary" : "List a page of one gallery's posts, sorted by curator rank, recency, or view count",
         "description" : null,
         "tags" : [ "" ],
         "parameters" : [ {
@@ -284,7 +285,8 @@
                       "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
                     } ],
                     "viewCount" : 0,
-                    "clickCount" : 0
+                    "clickCount" : 0,
+                    "sortOrder" : 0
                   } ],
                   "pagination" : {
                     "totalRecords" : 100,
@@ -457,6 +459,9 @@
                     "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
                     "timestamp" : "2024-01-01T00:00:00Z",
                     "galleryIds" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
+                    "gallerySortOrders" : {
+                      "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" : 0
+                    },
                     "notDigestibleReason" : "copyright",
                     "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
                     "deselectedAt" : "2024-01-02T00:00:00Z",
@@ -737,7 +742,7 @@
     },
     "/api/v1/admin/accounts/{accountId}/galleries/{galleryId}/items" : {
       "patch" : {
-        "summary" : "Add or remove a gallery's items by shortcode",
+        "summary" : "Add, remove, or rank a gallery's items by shortcode",
         "description" : null,
         "tags" : [ "" ],
         "parameters" : [ {
@@ -762,7 +767,11 @@
             "application/json" : {
               "example" : {
                 "add" : [ "Cabc123XYZ" ],
-                "remove" : [ "Cdef456UVW" ]
+                "remove" : [ "Cdef456UVW" ],
+                "sortOrders" : {
+                  "Cabc123XYZ" : 0
+                },
+                "clearSortOrders" : [ "Cghi789RST" ]
               },
               "schema" : {
                 "$ref" : "#/components/schemas/GalleryItemsRequest",
@@ -782,6 +791,7 @@
                   "added" : [ "Cabc123XYZ" ],
                   "alreadyPresent" : [ "Cghi789RST" ],
                   "removed" : [ "Cdef456UVW" ],
+                  "sortOrdersUpdated" : [ "Cabc123XYZ", "Cghi789RST" ],
                   "notFound" : [ "Cjkl012MNO" ]
                 },
                 "schema" : {
@@ -1026,7 +1036,8 @@
                 "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
               } ],
               "viewCount" : 0,
-              "clickCount" : 0
+              "clickCount" : 0,
+              "sortOrder" : 0
             } ],
             "format" : null,
             "type" : "array"
@@ -1069,7 +1080,8 @@
               "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
             } ],
             "viewCount" : 0,
-            "clickCount" : 0
+            "clickCount" : 0,
+            "sortOrder" : 0
           } ],
           "pagination" : {
             "totalRecords" : 100,
@@ -1147,6 +1159,11 @@
             "example" : 0,
             "format" : "int32",
             "type" : "integer"
+          },
+          "sortOrder" : {
+            "example" : 0,
+            "format" : "int64",
+            "type" : [ "integer", "null" ]
           }
         },
         "example" : {
@@ -1172,7 +1189,8 @@
             "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
           } ],
           "viewCount" : 0,
-          "clickCount" : 0
+          "clickCount" : 0,
+          "sortOrder" : 0
         },
         "format" : null,
         "type" : "object",
@@ -1320,6 +1338,9 @@
               "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
               "timestamp" : "2024-01-01T00:00:00Z",
               "galleryIds" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
+              "gallerySortOrders" : {
+                "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" : 0
+              },
               "notDigestibleReason" : "copyright",
               "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
               "deselectedAt" : "2024-01-02T00:00:00Z",
@@ -1342,6 +1363,9 @@
             "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
             "timestamp" : "2024-01-01T00:00:00Z",
             "galleryIds" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
+            "gallerySortOrders" : {
+              "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" : 0
+            },
             "notDigestibleReason" : "copyright",
             "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
             "deselectedAt" : "2024-01-02T00:00:00Z",
@@ -1400,6 +1424,26 @@
             "format" : null,
             "type" : "array"
           },
+          "gallerySortOrders" : {
+            "example" : null,
+            "additionalProperties" : {
+              "properties" : {
+                "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" : {
+                  "example" : 0,
+                  "format" : "int64",
+                  "type" : [ "integer", "null" ]
+                }
+              },
+              "example" : {
+                "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" : 0
+              },
+              "format" : null,
+              "type" : "object",
+              "required" : null
+            },
+            "format" : null,
+            "type" : "object"
+          },
           "notDigestibleReason" : {
             "example" : "copyright",
             "format" : null,
@@ -1428,6 +1472,9 @@
           "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
           "timestamp" : "2024-01-01T00:00:00Z",
           "galleryIds" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
+          "gallerySortOrders" : {
+            "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" : 0
+          },
           "notDigestibleReason" : "copyright",
           "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
           "deselectedAt" : "2024-01-02T00:00:00Z",
@@ -1435,7 +1482,7 @@
         },
         "format" : null,
         "type" : "object",
-        "required" : [ "galleryIds", "mediaType", "permalink", "shortcode", "timestamp" ]
+        "required" : [ "galleryIds", "gallerySortOrders", "mediaType", "permalink", "shortcode", "timestamp" ]
       },
       "MediaPurgeResponse" : {
         "properties" : {
@@ -1590,6 +1637,15 @@
             "format" : null,
             "type" : "array"
           },
+          "sortOrdersUpdated" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cabc123XYZ", "Cghi789RST" ],
+            "format" : null,
+            "type" : "array"
+          },
           "notFound" : {
             "items" : {
               "format" : null,
@@ -1604,11 +1660,12 @@
           "added" : [ "Cabc123XYZ" ],
           "alreadyPresent" : [ "Cghi789RST" ],
           "removed" : [ "Cdef456UVW" ],
+          "sortOrdersUpdated" : [ "Cabc123XYZ", "Cghi789RST" ],
           "notFound" : [ "Cjkl012MNO" ]
         },
         "format" : null,
         "type" : "object",
-        "required" : [ "added", "alreadyPresent", "notFound", "removed" ]
+        "required" : [ "added", "alreadyPresent", "notFound", "removed", "sortOrdersUpdated" ]
       },
       "GalleryItemsRequest" : {
         "properties" : {
@@ -1629,15 +1686,48 @@
             "example" : [ "Cdef456UVW" ],
             "format" : null,
             "type" : "array"
+          },
+          "sortOrders" : {
+            "example" : null,
+            "additionalProperties" : {
+              "properties" : {
+                "Cabc123XYZ" : {
+                  "example" : 0,
+                  "format" : "int64",
+                  "type" : [ "integer", "null" ]
+                }
+              },
+              "example" : {
+                "Cabc123XYZ" : 0
+              },
+              "format" : null,
+              "type" : "object",
+              "required" : null
+            },
+            "format" : null,
+            "type" : "object"
+          },
+          "clearSortOrders" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cghi789RST" ],
+            "format" : null,
+            "type" : "array"
           }
         },
         "example" : {
           "add" : [ "Cabc123XYZ" ],
-          "remove" : [ "Cdef456UVW" ]
+          "remove" : [ "Cdef456UVW" ],
+          "sortOrders" : {
+            "Cabc123XYZ" : 0
+          },
+          "clearSortOrders" : [ "Cghi789RST" ]
         },
         "format" : null,
         "type" : "object",
-        "required" : [ "add", "remove" ]
+        "required" : [ "add", "clearSortOrders", "remove", "sortOrders" ]
       }
     },
     "securitySchemes" : {

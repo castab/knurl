@@ -51,6 +51,8 @@ data class GalleryItemResponse(
     val mediaItems: List<GalleryMediaItemResponse>,
     val viewCount: Int,
     val clickCount: Int,
+    /** Curator-defined ascending rank, or null when this item follows timestamp-based placement. */
+    val sortOrder: Long?,
 )
 
 /** A gallery's identity and metadata, without its content. */
@@ -137,6 +139,7 @@ private val EXAMPLE_GALLERY_ITEM =
             ),
         viewCount = 0,
         clickCount = 0,
+        sortOrder = 0,
     )
 
 private fun PostMediaItem.toResponse(presigner: Presigner): GalleryMediaItemResponse {
@@ -170,6 +173,7 @@ internal fun GalleryPost.toResponse(presigner: Presigner): GalleryItemResponse =
         mediaItems = post.mediaItems.sortedBy { it.position }.map { it.toResponse(presigner) },
         viewCount = viewCount,
         clickCount = clickCount,
+        sortOrder = sortOrder,
     )
 
 internal fun Gallery.toResponse(): GallerySummaryResponse =
@@ -220,7 +224,7 @@ class GalleryRoutes(
     private val accountIdPath = Path.of("accountId")
     private val galleryIdPath = Path.of("galleryId")
     private val namePath = Path.of("name")
-    private val sortQuery = Query.string().defaulted("sort", "recent")
+    private val sortQuery = Query.string().defaulted("sort", "curated")
     private val limitQuery = Query.int().defaulted("limit", 12)
     private val pageQuery = Query.int().defaulted("page", 1)
     private val galleryListResponseLens = autoBody<GalleryListResponse>().toLens()
@@ -326,7 +330,7 @@ class GalleryRoutes(
 
     private fun listGalleryContent(): ContractRoute =
         "/api/v1/accounts" / accountIdPath / "galleries" / galleryIdPath meta {
-            summary = "List a page of one gallery's posts, sorted by recency or view count"
+            summary = "List a page of one gallery's posts, sorted by curator rank, recency, or view count"
             security = readBearerSecurity
             queries += sortQuery
             queries += limitQuery
@@ -351,7 +355,7 @@ class GalleryRoutes(
     /** Same content page as [listGalleryContent], resolved by name instead of id. */
     private fun getGalleryByName(): ContractRoute =
         "/api/v1/accounts" / accountIdPath / "galleries" / "by-name" / namePath meta {
-            summary = "Look up a page of one gallery's posts by name, sorted by recency or view count"
+            summary = "Look up a page of one gallery's posts by name, sorted by curator rank, recency, or view count"
             security = readBearerSecurity
             queries += sortQuery
             queries += limitQuery

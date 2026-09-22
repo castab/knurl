@@ -378,6 +378,8 @@
   // every unsaved change in a single PATCH.
   let baseline = new Map(); // shortcode -> selected, as the server last reported it
   let pending = new Map(); // shortcode -> current checkbox state
+  let baselineSortOrders = new Map(); // shortcode -> server rank for the curated gallery, or null
+  let pendingSortOrders = new Map(); // shortcode -> desired rank for the curated gallery, or null
   let catalogLinks = { prev: null, next: null };
   let catalogSelfLink = null; // the page to return to after committing
 
@@ -401,6 +403,10 @@
   function isInCuratedGallery(item) {
     const id = adminGalleryId();
     return Boolean(id) && item.galleryIds.includes(id);
+  }
+
+  function gallerySortOrder(item) {
+    return item.gallerySortOrders?.[adminGalleryId()] ?? null;
   }
 
   function catalogFirstPageUrl() {
@@ -438,6 +444,10 @@
         // Merge rather than overwrite: an unsaved toggle for this shortcode outranks what the
         // server just said, or paging away and back would silently discard it.
         if (!pending.has(item.shortcode)) pending.set(item.shortcode, isInCuratedGallery(item));
+        baselineSortOrders.set(item.shortcode, gallerySortOrder(item));
+        if (!pendingSortOrders.has(item.shortcode)) {
+          pendingSortOrders.set(item.shortcode, gallerySortOrder(item));
+        }
       }
       catalogSelfLink = body.pagination.links.self;
       catalogLinks = renderPagination(
@@ -464,7 +474,11 @@
   // has no way to know about. It therefore narrows the current page rather than the whole catalog.
   function visibleCatalogItems() {
     if (!els.filterPending.checked) return catalogItems;
-    return catalogItems.filter((item) => pending.get(item.shortcode) !== baseline.get(item.shortcode));
+    return catalogItems.filter(
+      (item) =>
+        pending.get(item.shortcode) !== baseline.get(item.shortcode) ||
+        pendingSortOrders.get(item.shortcode) !== baselineSortOrders.get(item.shortcode),
+    );
   }
 
   function renderCatalogPage() {
@@ -478,12 +492,34 @@
     els.catalogGrid.querySelectorAll("[data-shortcode]").forEach((checkbox) => {
       checkbox.addEventListener("change", () => {
         pending.set(checkbox.dataset.shortcode, checkbox.checked);
+        if (!checkbox.checked) {
+          pendingSortOrders.set(checkbox.dataset.shortcode, baselineSortOrders.get(checkbox.dataset.shortcode) ?? null);
+        }
         if (els.filterPending.checked) {
           // Toggling can move this item in/out of the "pending only" view itself.
           renderCatalogPage();
           return;
         }
-        checkbox.closest(".card")?.classList.toggle("selected", checkbox.checked);
+        renderCatalogPage();
+      });
+    });
+    els.catalogGrid.querySelectorAll("[data-sort-order]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const shortcode = input.dataset.sortOrder;
+        const raw = input.value.trim();
+        if (!raw) {
+          input.setCustomValidity("");
+          pendingSortOrders.set(shortcode, null);
+        } else {
+          const sortOrder = Number(raw);
+          if (!Number.isSafeInteger(sortOrder) || sortOrder < 0) {
+            input.setCustomValidity("Rank must be a whole number zero or greater.");
+            input.reportValidity();
+            return;
+          }
+          input.setCustomValidity("");
+          pendingSortOrders.set(shortcode, sortOrder);
+        }
         updatePendingSummary();
       });
     });
@@ -496,6 +532,7 @@
   els.catalogGrid.addEventListener("click", (event) => {
     if (event.target.closest("a")) return;
     if (event.target.matches('input[type="checkbox"]')) return;
+    if (event.target.matches('input[data-sort-order]')) return;
     // The purge button lives inside the card and has its own handler on this same element, so
     // stopPropagation there would not stop this one - it has to opt out explicitly.
     if (event.target.closest("button[data-purge-shortcode]")) return;
@@ -535,6 +572,13 @@
       ? `<span class="badge badge-warning">not digestible: ${escapeHtml(item.notDigestibleReason)}</span>`
       : "";
     const lifecycle = lifecycleBadge(item);
+    const sortOrder = pendingSortOrders.get(item.shortcode);
+    const rankControl = isChecked
+      ? `<label class="select-row">
+           Curated rank
+           <input type="number" min="0" step="1" data-sort-order="${escapeHtml(item.shortcode)}" value="${sortOrder ?? ""}" placeholder="Natural date order" />
+         </label>`
+      : "";
     // Only an item with downloaded media has anything to purge, and only the server knows for sure.
     // A deselected item is still worth offering it for, since its media survives the grace period.
     const purgeAction = item.galleryIds.length > 0 || item.deselectedAt
@@ -562,6 +606,7 @@
             <input type="checkbox" data-shortcode="${escapeHtml(item.shortcode)}" ${checked} ${disabled} />
             Selected
           </label>
+          ${rankControl}
           ${purgeAction}
         </div>
       </div>
@@ -578,11 +623,25 @@
     return { select, deselect };
   }
 
+  function diffSortOrders() {
+    const sortOrders = {};
+    const clearSortOrders = [];
+    for (const [shortcode, sortOrder] of pendingSortOrders) {
+      if (!pending.get(shortcode)) continue;
+      if (sortOrder === baselineSortOrders.get(shortcode)) continue;
+      if (sortOrder === null) clearSortOrders.push(shortcode);
+      else sortOrders[shortcode] = sortOrder;
+    }
+    return { sortOrders, clearSortOrders };
+  }
+
   function updatePendingSummary() {
     const { select, deselect } = diffSelection();
-    const total = select.length + deselect.length;
+    const { sortOrders, clearSortOrders } = diffSortOrders();
+    const rankCount = Object.keys(sortOrders).length + clearSortOrders.length;
+    const total = select.length + deselect.length + rankCount;
     els.pendingSummary.textContent = total
-      ? `${total} pending: ${select.length} to select, ${deselect.length} to deselect`
+      ? `${total} pending: ${select.length} to select, ${deselect.length} to deselect, ${rankCount} rank change(s)`
       : "";
     els.catalogCommit.disabled = total === 0;
     els.catalogReset.disabled = total === 0;
@@ -605,6 +664,7 @@
 
   els.catalogReset.addEventListener("click", () => {
     pending = new Map(baseline);
+    pendingSortOrders = new Map(baselineSortOrders);
     renderCatalogPage();
   });
 
@@ -614,7 +674,8 @@
   els.catalogCommit.addEventListener("click", async () => {
     showError(els.catalogError, "");
     const { select, deselect } = diffSelection();
-    if (!select.length && !deselect.length) return;
+    const { sortOrders, clearSortOrders } = diffSortOrders();
+    if (!select.length && !deselect.length && !Object.keys(sortOrders).length && !clearSortOrders.length) return;
     if (!adminGalleryId()) {
       showError(els.catalogError, "Pick a gallery to curate first.");
       return;
@@ -625,15 +686,22 @@
       const result = await apiFetch(
         `/api/v1/admin/accounts/${encodeURIComponent(accountId())}` +
           `/galleries/${encodeURIComponent(adminGalleryId())}/items`,
-        { method: "PATCH", token: adminToken(), body: { add: select, remove: deselect } },
+        {
+          method: "PATCH",
+          token: adminToken(),
+          body: { add: select, remove: deselect, sortOrders, clearSortOrders },
+        },
       );
       els.catalogStatus.textContent =
         `Added: ${result.added.length}, Removed: ${result.removed.length}, ` +
-        `Already present: ${result.alreadyPresent.length}, Not found: ${result.notFound.length}`;
+        `Ranked: ${result.sortOrdersUpdated.length}, Already present: ${result.alreadyPresent.length}, ` +
+        `Not found: ${result.notFound.length}`;
       // Every pending change has now been applied, so drop the accumulated state entirely and
       // refresh from server truth - staying on the page being viewed rather than jumping to 1.
       baseline = new Map();
       pending = new Map();
+      baselineSortOrders = new Map();
+      pendingSortOrders = new Map();
       await loadCatalog(catalogSelfLink ?? undefined);
     } catch (err) {
       showError(els.catalogError, err.message);
@@ -670,6 +738,8 @@
       // The purge deselects server-side, so any pending state for this card is now stale.
       baseline = new Map();
       pending = new Map();
+      baselineSortOrders = new Map();
+      pendingSortOrders = new Map();
       await loadCatalog(catalogSelfLink ?? undefined);
     } catch (err) {
       button.disabled = false;
@@ -759,6 +829,8 @@
   function resetCurationState() {
     baseline = new Map();
     pending = new Map();
+    baselineSortOrders = new Map();
+    pendingSortOrders = new Map();
     els.catalogGrid.innerHTML = "";
     els.catalogStatus.textContent = "";
     els.catalogPagination.classList.add("hidden");

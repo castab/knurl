@@ -28,6 +28,7 @@ private fun testPresigner(ttl: Duration = Duration.ofHours(6)): Presigner =
 private fun testCatalogEntry(
     thumbnailPath: String?,
     galleryIds: List<Uuid> = emptyList(),
+    gallerySortOrders: Map<Uuid, Long> = emptyMap(),
     deselectedAt: Instant? = null,
     purgeRequestedAt: Instant? = null,
 ): CatalogEntry =
@@ -42,6 +43,7 @@ private fun testCatalogEntry(
         notDigestibleReason = null,
         thumbnailPath = thumbnailPath,
         galleryIds = galleryIds,
+        gallerySortOrders = gallerySortOrders,
         deselectedAt = deselectedAt,
         purgeRequestedAt = purgeRequestedAt,
         updatedAt = Instant.parse("2024-01-01T00:00:00Z"),
@@ -86,5 +88,17 @@ class AdminCatalogItemMappingTest :
 
             response.deselectedAt.shouldBeNull()
             response.purgeRequestedAt.shouldBeNull()
+        }
+
+        test("exposes curator ranks by gallery id") {
+            val galleryId = Uuid.random()
+            val entry =
+                testCatalogEntry(
+                    thumbnailPath = null,
+                    galleryIds = listOf(galleryId),
+                    gallerySortOrders = mapOf(galleryId to 3),
+                )
+
+            entry.toResponse(testPresigner()).gallerySortOrders shouldBe mapOf(galleryId.toString() to 3)
         }
     })
