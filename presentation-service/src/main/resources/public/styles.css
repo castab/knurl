@@ -310,6 +310,17 @@ main {
   max-width: 10rem;
 }
 
+/* Keep browser-native number controls inside narrow gallery cards. */
+.curated-rank-row {
+  flex-wrap: wrap;
+}
+
+.curated-rank-row input[type="number"] {
+  width: min(10rem, 100%);
+  max-width: 100%;
+  min-width: 0;
+}
+
 /* Deliberately understated: a destructive action should be findable but not invite a stray click,
    which is also why it is confirmed before it fires. */
 .link-button {

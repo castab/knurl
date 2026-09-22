@@ -574,7 +574,7 @@
     const lifecycle = lifecycleBadge(item);
     const sortOrder = pendingSortOrders.get(item.shortcode);
     const rankControl = isChecked
-      ? `<label class="select-row">
+      ? `<label class="select-row curated-rank-row">
            Curated rank
            <input type="number" min="0" step="1" data-sort-order="${escapeHtml(item.shortcode)}" value="${sortOrder ?? ""}" placeholder="Natural date order" />
          </label>`
