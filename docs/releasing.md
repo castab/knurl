@@ -43,6 +43,6 @@ Git tags have a `v` prefix. Stable releases use `vX.Y.Z`; release candidates use
 ## Required setup
 
 - Create the two Docker Hub repositories as public repositories before the first release.
-- Configure the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` GitHub Actions secrets. The token must have push access to both repositories.
+- Configure the `DOCKERHUB_USERNAME` GitHub Actions variable and `DOCKERHUB_TOKEN` GitHub Actions secret. The token must have push access to both repositories.
 - Protect `main` with the required CI checks.
 - Protect `v*` tags so only release maintainers can create or update them.
