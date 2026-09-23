@@ -10,7 +10,7 @@ application {
 dependencies {
     implementation(project(":shared-domain"))
 
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp:5.5.0")
 
     implementation("com.sksamuel.scrimage:scrimage-core:4.6.8")
     implementation("com.sksamuel.scrimage:scrimage-webp:4.6.8")
@@ -27,5 +27,5 @@ dependencies {
 
     implementation("org.slf4j:slf4j-simple:2.0.16")
 
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.5.0")
 }
