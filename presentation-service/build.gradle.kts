@@ -53,7 +53,7 @@ dependencies {
     // OkHttp itself arrives transitively from shared-domain's credential-HTTP hardening, which this
     // service's credential fetch is built on. MockWebServer exercises that fetch for real, rather
     // than mocking away the client whose bounds and TLS rules are the point of the tests.
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.5.0")
 }
 
 /**
