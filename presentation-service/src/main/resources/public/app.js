@@ -440,10 +440,21 @@
       const body = await apiFetch(url ?? catalogFirstPageUrl(), { token: adminToken() });
       catalogItems = body.data;
       for (const item of catalogItems) {
-        baseline.set(item.shortcode, isInCuratedGallery(item));
+        const inGallery = isInCuratedGallery(item);
+        baseline.set(item.shortcode, inGallery);
         // Merge rather than overwrite: an unsaved toggle for this shortcode outranks what the
-        // server just said, or paging away and back would silently discard it.
-        if (!pending.has(item.shortcode)) pending.set(item.shortcode, isInCuratedGallery(item));
+        // server just said, or paging away and back would silently discard it. The one exception
+        // is a non-digestible item: its checkbox is always `disabled` below, so there is no way a
+        // genuine admin toggle produced a `true` pending entry for it - any such entry can only be
+        // a stale carryover from before it became non-digestible (e.g. a background sync cycle just
+        // reactively removed it from this gallery). Force it back to reality rather than merging, or
+        // the card would keep rendering checked/selected - and offered for commit - long after it
+        // stopped being a real, addable gallery member.
+        if (item.notDigestibleReason) {
+          pending.set(item.shortcode, false);
+        } else if (!pending.has(item.shortcode)) {
+          pending.set(item.shortcode, inGallery);
+        }
         baselineSortOrders.set(item.shortcode, gallerySortOrder(item));
         if (!pendingSortOrders.has(item.shortcode)) {
           pendingSortOrders.set(item.shortcode, gallerySortOrder(item));
