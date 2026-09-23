@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-09-23
+
+### Fixed
+
+- The bundled admin UI's catalog browser no longer keeps showing an item as checked/selected after it becomes non-digestible and is reactively removed from its gallery (v0.1.2): the checkbox is disabled and unchecked, and the card no longer renders with the "selected" highlight, matching the fact that it's no longer a real gallery member.
+
 ## [0.1.2] - 2026-09-22
 
 ### Fixed
