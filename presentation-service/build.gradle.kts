@@ -38,7 +38,7 @@ dependencies {
     // side effect of bumping the http4k-bom version above. Versions below are whatever the BOM
     // currently resolves to - re-pin these (./gradlew :presentation-service:dependencies) whenever
     // http4k-bom is bumped, rather than letting the pin quietly go stale and mask a real upgrade.
-    implementation(platform("io.netty:netty-bom:4.1.137.Final"))
+    implementation(platform("io.netty:netty-bom:4.2.18.Final"))
     constraints {
         implementation("io.undertow:undertow-core:2.4.2.Final")
         implementation("org.jboss.xnio:xnio-api:3.8.16.Final")
