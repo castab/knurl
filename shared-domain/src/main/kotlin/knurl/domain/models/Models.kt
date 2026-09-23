@@ -197,7 +197,11 @@ data class CatalogEntry(
  * Fields known to the ingestion pipeline before a catalog row exists - everything except
  * `thumbnailPath` (written separately by the thumbnail fetch step, never clobbered by this upsert)
  * and `updatedAt` (left to the column default / `CURRENT_TIMESTAMP` on conflict). Gallery
- * membership lives in its own table and is admin-owned, so a re-sync cannot disturb it at all.
+ * membership lives in its own table and is admin-owned - a re-sync never adds to or reorders it -
+ * with one deliberate exception: [knurl.domain.repositories.CatalogRepository.upsert] reactively
+ * *removes* an item's membership the instant [notDigestibleReason] transitions from null to
+ * non-null, since a non-digestible item sitting in a gallery would never produce an
+ * [InstagramPost]. See [CatalogUpsertResult] and [becameNonDigestible].
  */
 data class CatalogUpsert(
     val instagramMediaId: String,
@@ -209,6 +213,34 @@ data class CatalogUpsert(
     val timestamp: Instant,
     val notDigestibleReason: String?,
 )
+
+/**
+ * Result of [knurl.domain.repositories.CatalogRepository.upsert]. [removedFromGalleries] holds the
+ * names of every gallery the item was just reactively removed from because this upsert transitioned
+ * it to non-digestible ([becameNonDigestible]) - empty for the overwhelming majority of upserts,
+ * where nothing changed or the item wasn't in any gallery to begin with.
+ */
+data class CatalogUpsertResult(
+    val removedFromGalleries: List<String>,
+)
+
+/**
+ * Whether a catalog upsert just transitioned an item to non-digestible: [previousReason] was null
+ * (the item was downloadable, or this is its first-ever sync) and [newReason] is non-null. This is
+ * the trigger for [knurl.domain.repositories.CatalogRepository.upsert]'s reactive gallery removal -
+ * an item already flagged (non-null [previousReason]) does not re-fire even if the reason value
+ * itself changes, since it was already handled the cycle it first flipped, and there is nothing left
+ * to remove a second time. The reverse direction ([previousReason] non-null, [newReason] null -
+ * Instagram serving the media again) is also false: nothing needs to react to that, since the item
+ * was already removed from every gallery when it first went non-digestible, and
+ * [knurl.domain.repositories.GalleryRepository]'s add path refuses to put a still-non-digestible
+ * item back - re-adding it once it's digestible again is left to an admin, the same as any other
+ * gallery curation decision.
+ */
+fun becameNonDigestible(
+    previousReason: String?,
+    newReason: String?,
+): Boolean = previousReason == null && newReason != null
 
 /**
  * Result of [knurl.domain.repositories.CatalogRepository.requestPurge].

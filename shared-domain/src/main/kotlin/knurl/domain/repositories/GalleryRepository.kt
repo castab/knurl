@@ -373,7 +373,12 @@ class GalleryRepository(
      * joining only `galleries` to the account would let one account add another account's media to
      * its own public gallery. The join requires the catalog row and the gallery to agree on the
      * account, and a shortcode that fails that test comes back as `notFound` - the same way a
-     * typo'd one does.
+     * typo'd one does. **A currently non-digestible item is excluded the same way** - `addItems`'s
+     * `requested` CTE also requires `not_digestible_reason IS NULL`, so it never enters `added` and
+     * falls into `notFound` too. This is what keeps `CatalogRepository.upsert`'s reactive removal (see
+     * its KDoc) from being immediately undone: without this, an admin - or a direct API call bypassing
+     * the browse UI's own client-side check - could put a still-non-digestible item straight back into
+     * a gallery a moment after ingestion took it out.
      *
      * Adds clear both lifecycle timestamps (the item is live again); removes stamp `deselected_at`
      * only for items that end the transaction with no memberships left, using `COALESCE` so an item
@@ -428,6 +433,7 @@ class GalleryRepository(
             )
         }
 
+    /** See [updateItems]'s KDoc for why `not_digestible_reason IS NULL` is part of this filter, not just a defensive extra. */
     private fun addItems(
         handle: Handle,
         accountId: String,
@@ -444,6 +450,7 @@ class GalleryRepository(
                     WHERE g.id = :galleryId
                       AND g.instagram_account_id = :accountId
                       AND c.shortcode = ANY(:shortcodes)
+                      AND c.not_digestible_reason IS NULL
                 ), inserted AS (
                     INSERT INTO gallery_items (gallery_id, instagram_media_id)
                     SELECT :galleryId, instagram_media_id FROM requested
