@@ -40,7 +40,7 @@ dependencies {
     // http4k-bom is bumped, rather than letting the pin quietly go stale and mask a real upgrade.
     implementation(platform("io.netty:netty-bom:4.1.137.Final"))
     constraints {
-        implementation("io.undertow:undertow-core:2.4.2.Final")
+        implementation("io.undertow:undertow-core:2.4.3.Final")
         implementation("org.jboss.xnio:xnio-api:3.8.16.Final")
         implementation("org.jboss.xnio:xnio-nio:3.8.16.Final")
         implementation("com.fasterxml.jackson.core:jackson-core:2.22.2")
