@@ -4,11 +4,13 @@ import knurl.domain.models.AuthConfig
 import knurl.domain.models.CatalogEntry
 import knurl.domain.models.CatalogFilter
 import knurl.domain.models.CatalogUpsert
+import knurl.domain.models.CatalogUpsertResult
 import knurl.domain.models.EvictionCandidate
 import knurl.domain.models.InstagramPostUpsert
 import knurl.domain.models.Page
 import knurl.domain.models.PostMediaItem
 import knurl.domain.models.PurgeRequestResult
+import knurl.domain.models.becameNonDigestible
 import knurl.domain.security.CredentialCipher
 import knurl.domain.security.TokenHasher
 import org.jdbi.v3.core.Jdbi
@@ -891,9 +893,32 @@ class CatalogRepository(
      * refreshed on every sync (unlike `selected`) since ingestion, not an admin, is the sole
      * source of truth for it - e.g. it should clear itself automatically if Instagram later starts
      * returning `media_url` for an item previously flagged.
+     *
+     * This is also the fifth path (alongside `GalleryRepository`'s add/remove/gallery-delete/purge)
+     * that can move `instagram_media_catalog.deselected_at`: when [becameNonDigestible] says this
+     * upsert just flipped the item from downloadable to non-digestible, it is reactively removed
+     * from every gallery holding it and its retention clock is started, atomically with the upsert
+     * itself - a non-digestible item sitting in a gallery would otherwise sit forever without ever
+     * producing an [knurl.domain.models.InstagramPost]. All of this runs in one transaction: the
+     * `INSERT ... ON CONFLICT DO UPDATE` above already takes and holds this row's lock for the rest
+     * of the transaction (the same lock `GalleryRepository.lockCatalogRows`'s explicit `FOR UPDATE`
+     * takes for its four paths), which is what serializes this against a concurrent
+     * `GalleryRepository.updateItems`/`delete`/`requestPurge` on the same media id - no extra
+     * explicit lock is needed. The reverse transition (an item clearing back to digestible) needs no
+     * reactive code here: it was already removed from every gallery when it first became
+     * non-digestible, and `GalleryRepository.addItems` refuses to re-add a still-non-digestible item,
+     * so there is nothing to restore automatically either way.
      */
-    fun upsert(entry: CatalogUpsert) {
-        jdbi.useHandle<Exception> { handle ->
+    fun upsert(entry: CatalogUpsert): CatalogUpsertResult =
+        jdbi.inTransaction<CatalogUpsertResult, Exception> { handle ->
+            val previousReason =
+                handle
+                    .createQuery("SELECT not_digestible_reason FROM instagram_media_catalog WHERE instagram_media_id = :id")
+                    .bind("id", entry.instagramMediaId)
+                    .mapTo<String>()
+                    .findFirst()
+                    .orElse(null)
+
             handle
                 .createUpdate(
                     """
@@ -914,8 +939,45 @@ class CatalogRepository(
                     """.trimIndent(),
                 ).bindKotlin(entry)
                 .execute()
+
+            if (!becameNonDigestible(previousReason, entry.notDigestibleReason)) {
+                return@inTransaction CatalogUpsertResult(removedFromGalleries = emptyList())
+            }
+
+            val affectedGalleryNames =
+                handle
+                    .createQuery(
+                        """
+                        SELECT DISTINCT g.name FROM galleries g
+                        JOIN gallery_items gi ON gi.gallery_id = g.id
+                        WHERE gi.instagram_media_id = :id
+                        ORDER BY g.name
+                        """.trimIndent(),
+                    ).bind("id", entry.instagramMediaId)
+                    .mapTo<String>()
+                    .list()
+
+            if (affectedGalleryNames.isEmpty()) {
+                return@inTransaction CatalogUpsertResult(removedFromGalleries = emptyList())
+            }
+
+            handle
+                .createUpdate("DELETE FROM gallery_items WHERE instagram_media_id = :id")
+                .bind("id", entry.instagramMediaId)
+                .execute()
+
+            handle
+                .createUpdate(
+                    """
+                    UPDATE instagram_media_catalog
+                    SET deselected_at = COALESCE(deselected_at, CURRENT_TIMESTAMP)
+                    WHERE instagram_media_id = :id
+                    """.trimIndent(),
+                ).bind("id", entry.instagramMediaId)
+                .execute()
+
+            CatalogUpsertResult(removedFromGalleries = affectedGalleryNames)
         }
-    }
 
     /**
      * Every media id currently in this account's catalog, selected or not. Used by the ingestion

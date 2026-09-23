@@ -196,8 +196,12 @@ fun thumbnailSourceUrl(item: MediaItem): String? {
  *
  * Every paginated feed item is upserted into `instagram_media_catalog` unconditionally, regardless
  * of selection state - this is what powers the admin browse-and-select API in presentation-service.
- * Gallery membership itself is never touched here; it's exclusively set/cleared via
- * `PATCH /api/v1/admin/accounts/{accountId}/galleries/{galleryId}/items`.
+ * Gallery membership is otherwise exclusively set/cleared via
+ * `PATCH /api/v1/admin/accounts/{accountId}/galleries/{galleryId}/items` - with one deliberate
+ * exception: [CatalogRepository.upsert] reactively removes an item from every gallery holding it
+ * (and starts its retention clock) the instant that same upsert detects the item just became
+ * non-digestible. See that method's KDoc; the removal happens inside the upsert itself; this
+ * function only logs it (in [syncCatalogEntry]).
  *
  * "Vanished" removal (see [removeVanishedMedia]) is a distinct kind of deletion from retention: it
  * fires when Instagram itself is the one saying an item no longer exists, so unlike deselection
@@ -290,7 +294,13 @@ class SyncPipeline(
         catalogRepository.updateThumbnailPath(item.id, key)
     }
 
-    /** Upserts catalog metadata unconditionally, then enqueues the media for download if a gallery holds it and it isn't already synced. */
+    /**
+     * Upserts catalog metadata unconditionally, then enqueues the media for download if a gallery
+     * holds it and it isn't already synced. If the upsert detects this item just became
+     * non-digestible, it has already reactively removed it from every gallery holding it (see
+     * [CatalogRepository.upsert]'s KDoc) - this only logs that, at `WARN` since - like vanished-media
+     * removal - it can silently empty a slot in a gallery an admin curated by hand.
+     */
     private fun syncCatalogEntry(
         item: MediaItem,
         galleryMemberIds: Set<String>,
@@ -311,18 +321,28 @@ class SyncPipeline(
                     return
                 }
 
-        catalogRepository.upsert(
-            CatalogUpsert(
-                instagramMediaId = item.id,
-                instagramAccountId = targetUserId,
-                shortcode = shortcode,
-                mediaType = item.mediaType,
-                caption = item.caption,
-                permalink = item.permalink,
-                timestamp = timestamp,
-                notDigestibleReason = notDigestibleReason(item),
-            ),
-        )
+        val upsertResult =
+            catalogRepository.upsert(
+                CatalogUpsert(
+                    instagramMediaId = item.id,
+                    instagramAccountId = targetUserId,
+                    shortcode = shortcode,
+                    mediaType = item.mediaType,
+                    caption = item.caption,
+                    permalink = item.permalink,
+                    timestamp = timestamp,
+                    notDigestibleReason = notDigestibleReason(item),
+                ),
+            )
+
+        if (upsertResult.removedFromGalleries.isNotEmpty()) {
+            log.warn(
+                "Media ${item.id} for $targetUserId became non-digestible (likely copyright-flagged by " +
+                    "Instagram) and was removed from ${upsertResult.removedFromGalleries.size} curated " +
+                    "galler${if (upsertResult.removedFromGalleries.size == 1) "y" else "ies"}: " +
+                    upsertResult.removedFromGalleries,
+            )
+        }
 
         if (shouldDownload(item.id, galleryMemberIds, existingIds)) {
             downloadQueueRepository.enqueue(targetUserId, item.id)
