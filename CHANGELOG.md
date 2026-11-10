@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-09
+
 ### Changed
 
 - **Breaking:** combine HTTP presentation and ingestion into `knurl-app`, with one `castab/knurl` image and a fresh PostgreSQL schema baseline requiring an explicit reset.
