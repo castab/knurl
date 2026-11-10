@@ -2,7 +2,7 @@
 
 ## Deploy one instance
 
-Build with `docker build -t knurl .` or use `castab/knurl:<version>`. The image runs one non-root JVM with a 512 MB heap and includes ffprobe. Provide PostgreSQL 18+, `DATABASE_URL`, a stable `CREDENTIAL_ENCRYPTION_KEY`, and exactly one management-token source. Supply secrets through your deployment platform; do not bake them into the image. Account and bucket credentials belong in the management API, not environment variables.
+Build with `docker build -t knurl .` or use `castab/knurl:<version>`. The image runs one non-root JVM with a 512 MB heap and includes ffprobe. That ffprobe is compiled during the image build as a static, LGPL-only binary from a pinned, checksum-verified FFmpeg release, limited to MP4/MOV with H.264, HEVC, VP8, VP9, AV1, and MPEG-4 video; the runtime stage installs no packages. To upgrade it, change `FFMPEG_VERSION` and `FFMPEG_SHA256` together in the Dockerfile. Provide PostgreSQL 18+, `DATABASE_URL`, a stable `CREDENTIAL_ENCRYPTION_KEY`, and exactly one management-token source. Supply secrets through your deployment platform; do not bake them into the image. Account and bucket credentials belong in the management API, not environment variables.
 
 Run only one active Knurl instance per database. Stop the old instance before starting its replacement. Startup recovers unfinished jobs, so overlapping replicas are unsupported. Termination grace should accommodate an active remote call (up to five minutes); workers finish synchronous persistence boundaries before clients close. A forced kill leaves durable work for startup recovery and may leave prefix-scoped orphans.
 

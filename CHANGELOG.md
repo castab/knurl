@@ -13,6 +13,7 @@ All notable changes to this project are documented in this file.
 - Add bundled UI controls for ingestion and scheduling; replace the local MinIO stack with community Garage.
 - Key rate limits on the edge-set client address header (`CLIENT_IP_HEADER`, default Cloudflare's `CF-Connecting-IP`) instead of the caller-supplied first `X-Forwarded-For` hop; cap every request body at 64 KB; require read/admin tokens of at least 16 characters.
 - Add an unauthenticated `GET /health` database probe and an image `HEALTHCHECK`.
+- Build a static, LGPL-only `ffprobe` from a pinned FFmpeg release in the image instead of installing the distribution's `ffmpeg` package; the runtime stage no longer installs packages.
 - Replace external credential-broker modes, global bucket credentials, separate service entrypoints, and two-image publishing. Document the new operational and security boundaries.
 
 
