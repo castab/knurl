@@ -14,3 +14,6 @@ application-instagram.conf
 # Note: each service's config/application-local.conf IS tracked. It holds dev-only defaults shared
 # with the team, and lives outside src/main/resources on purpose so it is never packaged into the
 # jar/image - only application.conf ships.
+
+# Local management API payloads may contain recoverable secrets.
+*.local.json

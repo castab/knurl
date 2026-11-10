@@ -1,6 +1,5 @@
 package knurl.domain.repositories
 
-import knurl.domain.models.AuthConfig
 import knurl.domain.models.CatalogEntry
 import knurl.domain.models.CatalogFilter
 import knurl.domain.models.CatalogUpsert
@@ -11,7 +10,6 @@ import knurl.domain.models.Page
 import knurl.domain.models.PostMediaItem
 import knurl.domain.models.PurgeRequestResult
 import knurl.domain.models.becameNonDigestible
-import knurl.domain.security.CredentialCipher
 import knurl.domain.security.TokenHasher
 import org.jdbi.v3.core.Jdbi
 import org.jdbi.v3.core.kotlin.bindKotlin
@@ -38,9 +36,8 @@ sealed interface AccountTokenVerification {
  * test coverage. This function *is* the mechanism that keeps one account's content from being
  * reachable with another account's token.
  *
- * [storedHash] used to come from `instagram_accounts`; it now comes from `presentation-service`'s
- * in-memory credential store, populated either from its own environment or from the control plane.
- * The comparison is unchanged by that move, which is the point of it living here.
+ * The repository decrypts the account's admin token or reads its public read token and passes
+ * its digest here. Digests permit constant-time comparison without exposing credential values.
  */
 fun verifyAccountToken(
     storedHash: String?,
@@ -53,329 +50,6 @@ fun verifyAccountToken(
     } else {
         AccountTokenVerification.Mismatch
     }
-}
-
-/**
- * Registry of which Instagram accounts this deployment knows about. Rows carry no credentials:
- * `instagram_accounts` is the foreign-key anchor that `instagram_posts` and `galleries` reference,
- * and the work queue `ingestion-service`'s feed-sync workers claim from. Nothing more.
- *
- * Presentation tokens deliberately do not live here. They used to - `ingestion-service` rewrote
- * both hashes from its own environment on every startup, which silently clobbered whatever a
- * control plane had provisioned each time ingestion restarted. Both services now resolve those
- * tokens from `presentation-service`'s in-memory credential store instead, so [ensureAccount] is
- * the whole of this repository's write surface and it is idempotent by construction.
- */
-class AccountRepository(
-    private val jdbi: Jdbi,
-) {
-    /**
-     * Anchors [accountId] so rows referencing it can exist, without disturbing an existing row's
-     * sync-claim state. Called by `ingestion-service` for its own configured account, and by
-     * `presentation-service` for every account a credential fetch returns - which is how an account
-     * the control plane knows about becomes one ingestion's workers will claim and sync.
-     */
-    fun ensureAccount(accountId: String) {
-        jdbi.useHandle<Exception> { handle ->
-            handle
-                .createUpdate(
-                    """
-                    INSERT INTO instagram_accounts (instagram_account_id)
-                    VALUES (:accountId)
-                    ON CONFLICT (instagram_account_id) DO NOTHING
-                    """.trimIndent(),
-                ).bind("accountId", accountId)
-                .execute()
-        }
-    }
-}
-
-/**
- * Persistence boundary for standalone ingestion's refreshable Instagram access token.
- *
- * `auth_config` has no foreign key to `instagram_accounts` (it's slated to move into its own,
- * separate database owned by a future credentials broker), so nothing at the database level
- * cleans up a row when its account is removed. [delete] is that cleanup primitive - callers
- * implementing account removal are expected to invoke it explicitly, even though no such feature
- * exists yet.
- */
-interface AuthConfigStore {
-    fun get(accountId: String): AuthConfig?
-
-    fun upsert(config: AuthConfig)
-
-    fun delete(accountId: String)
-}
-
-/**
- * [AuthConfig.accessToken] is encrypted with [cipher] going into `access_token_encrypted` and
- * decrypted coming back out, transparently to every caller - [AuthConfig] itself always carries
- * the plaintext token in memory. See [CredentialCipher]'s doc
- * comment for why this token is encrypted rather than hashed like the admin token.
- */
-class AuthConfigRepository(
-    private val jdbi: Jdbi,
-    private val cipher: CredentialCipher,
-) : AuthConfigStore {
-    override fun get(accountId: String): AuthConfig? =
-        jdbi.withHandle<AuthConfig?, Exception> { handle ->
-            handle
-                .createQuery(
-                    """
-                    SELECT instagram_account_id, access_token_encrypted AS access_token, expires_at, updated_at
-                    FROM auth_config WHERE instagram_account_id = :accountId
-                    """.trimIndent(),
-                ).bind("accountId", accountId)
-                .mapTo<AuthConfig>()
-                .findFirst()
-                .orElse(null)
-                ?.let { it.copy(accessToken = cipher.decrypt(it.accessToken)) }
-        }
-
-    override fun upsert(config: AuthConfig) {
-        val toStore = config.copy(accessToken = cipher.encrypt(config.accessToken))
-        jdbi.useHandle<Exception> { handle ->
-            handle
-                .createUpdate(
-                    """
-                    INSERT INTO auth_config (instagram_account_id, access_token_encrypted, expires_at, updated_at)
-                    VALUES (:instagramAccountId, :accessToken, :expiresAt, :updatedAt)
-                    ON CONFLICT (instagram_account_id) DO UPDATE SET
-                        access_token_encrypted = EXCLUDED.access_token_encrypted,
-                        expires_at = EXCLUDED.expires_at,
-                        updated_at = EXCLUDED.updated_at
-                    """.trimIndent(),
-                ).bindKotlin(toStore)
-                .execute()
-        }
-    }
-
-    override fun delete(accountId: String) {
-        jdbi.useHandle<Exception> { handle ->
-            handle
-                .createUpdate("DELETE FROM auth_config WHERE instagram_account_id = :accountId")
-                .bind("accountId", accountId)
-                .execute()
-        }
-    }
-}
-
-/**
- * One account claimed by [AccountClaimRepository.claimDueAccount]. [previousClaimedAt] is the
- * `sync_claimed_at` value the claimed row had *before* this claim overwrote it - non-null means
- * this claim retook an abandoned attempt (a previous worker's `sync_claimed_at` went stale without
- * ever clearing it via [AccountClaimRepository.markSynced]), which callers log at WARN for
- * operator visibility. Null means this was a fresh, never-claimed-or-cleanly-completed account.
- */
-data class AccountClaim(
-    val instagramAccountId: String,
-    val previousClaimedAt: Instant?,
-)
-
-/**
- * Account-agnostic feed-sync scheduling: which account is due for a sync, claimed via Postgres row
- * locking rather than a coroutine semaphore, so any worker in any process can safely claim any due
- * account with no coordination beyond the database itself.
- *
- * Deliberately a fast claim-and-release, not a held transaction: [claimDueAccount] and
- * [markSynced] are each one short statement, and the actual feed-sync work in between runs with no
- * transaction open at all. A worker that crashes mid-sync simply leaves `sync_claimed_at` set and
- * stale - see [AccountClaim] - rather than holding a connection for as long as that sync takes.
- */
-class AccountClaimRepository(
-    private val jdbi: Jdbi,
-) {
-    /**
-     * Claims exactly one account whose `last_synced_at` is null or at/before [dueBefore], and
-     * whose `sync_claimed_at` is null or older than [leaseSeconds] (an abandoned claim), ordered
-     * oldest-due-first. Returns null when nothing is currently due.
-     *
-     * [dueBefore] is a caller-computed cutoff rather than an interval, deliberately: the caller
-     * decides whether it's relative to "now" (recomputed fresh on every poll, for a persistent
-     * daemon's continuous staleness check) or a single fixed instant captured once before a
-     * `RUN_ONCE` invocation's loop starts (see `feedSyncWorkerLoop` in `Main.kt`) - the latter is
-     * what makes each account claimable *at most once* per one-shot run: once successfully synced,
-     * its `last_synced_at` becomes newer than that fixed cutoff and it stops being due for the rest
-     * of that invocation, rather than being claimable again the instant it's released (an interval
-     * of "0 seconds relative to now" would never actually elapse, claiming the same account
-     * forever in a tight loop that `RUN_ONCE` would never exit).
-     *
-     * `LIMIT 1`, not a batch: a claimed account means running its entire multi-page feed sync, so
-     * concurrency should come from running more independent workers (each claiming one account and
-     * looping) rather than from claiming several accounts into one round trip.
-     */
-    fun claimDueAccount(
-        dueBefore: Instant,
-        leaseSeconds: Long,
-    ): AccountClaim? =
-        jdbi.withHandle<AccountClaim?, Exception> { handle ->
-            handle
-                .createQuery(
-                    """
-                    WITH claimable AS (
-                        SELECT instagram_account_id, sync_claimed_at
-                        FROM instagram_accounts
-                        WHERE (last_synced_at IS NULL OR last_synced_at <= :dueBefore)
-                          AND (sync_claimed_at IS NULL OR sync_claimed_at <= now() - (:leaseSeconds || ' seconds')::interval)
-                        ORDER BY last_synced_at ASC NULLS FIRST
-                        FOR UPDATE SKIP LOCKED
-                        LIMIT 1
-                    )
-                    UPDATE instagram_accounts
-                    SET sync_claimed_at = CURRENT_TIMESTAMP
-                    FROM claimable
-                    WHERE instagram_accounts.instagram_account_id = claimable.instagram_account_id
-                    RETURNING instagram_accounts.instagram_account_id, claimable.sync_claimed_at AS previous_claimed_at
-                    """.trimIndent(),
-                ).bind("dueBefore", dueBefore)
-                .bind("leaseSeconds", leaseSeconds)
-                .mapTo<AccountClaim>()
-                .findFirst()
-                .orElse(null)
-        }
-
-    /** Clears the claim and stamps `last_synced_at`, marking a sync cycle as cleanly completed. */
-    fun markSynced(accountId: String) {
-        jdbi.useHandle<Exception> { handle ->
-            handle
-                .createUpdate(
-                    """
-                    UPDATE instagram_accounts
-                    SET last_synced_at = CURRENT_TIMESTAMP, sync_claimed_at = NULL
-                    WHERE instagram_account_id = :accountId
-                    """.trimIndent(),
-                ).bind("accountId", accountId)
-                .execute()
-        }
-    }
-}
-
-/**
- * One item claimed by [DownloadQueueRepository.claimBatch]. [previousStatus] is the row's status
- * *before* this claim overwrote it - `"CLAIMED"` means this claim retook an abandoned attempt
- * (see [DownloadQueueRepository]'s doc comment), which callers log at WARN; `"UNCLAIMED"` means
- * this was fresh work.
- */
-data class PendingDownload(
-    val instagramAccountId: String,
-    val instagramMediaId: String,
-    val previousStatus: String,
-)
-
-/**
- * Account-agnostic download queue: which catalog items are selected into a gallery and not yet
- * downloaded, claimed via Postgres row locking so any worker in any process can safely pull work
- * regardless of which account it belongs to - the credential provider resolves the right token
- * per claimed item's own `instagramAccountId`.
- *
- * Fast claim-and-release, not a held transaction: [claimBatch] and [markComplete] are each one
- * short statement, and the actual download/optimize/store work in between runs with no
- * transaction open. A worker that crashes or fails mid-item simply leaves the row `CLAIMED` and
- * its `claimed_at` stale - the next claim treats that identically to a fresh crash, with no
- * distinction and no separate reaper process.
- */
-class DownloadQueueRepository(
-    private val jdbi: Jdbi,
-) {
-    /** Idempotent: called every time [knurl.ingestion.pipeline.SyncPipeline] decides an item should be downloaded. */
-    fun enqueue(
-        accountId: String,
-        mediaId: String,
-    ) {
-        jdbi.useHandle<Exception> { handle ->
-            handle
-                .createUpdate(
-                    """
-                    INSERT INTO pending_downloads (instagram_account_id, instagram_media_id)
-                    VALUES (:accountId, :mediaId)
-                    ON CONFLICT (instagram_account_id, instagram_media_id) DO NOTHING
-                    """.trimIndent(),
-                ).bind("accountId", accountId)
-                .bind("mediaId", mediaId)
-                .execute()
-        }
-    }
-
-    /**
-     * Claims up to [batchSize] items that are `UNCLAIMED`, or `CLAIMED` with a `claimed_at` older
-     * than [leaseSeconds] (abandoned), oldest-enqueued-first. With no lock held across the actual
-     * download, claimed items can be processed concurrently by the caller - unlike the account
-     * claim above, there is no reason to keep this batch small purely for lock-duration reasons.
-     */
-    fun claimBatch(
-        batchSize: Int,
-        leaseSeconds: Long,
-    ): List<PendingDownload> =
-        jdbi.withHandle<List<PendingDownload>, Exception> { handle ->
-            handle
-                .createQuery(
-                    """
-                    WITH claimable AS (
-                        SELECT instagram_account_id, instagram_media_id, status AS previous_status
-                        FROM pending_downloads
-                        WHERE status = 'UNCLAIMED'
-                           OR (status = 'CLAIMED' AND claimed_at <= now() - (:leaseSeconds || ' seconds')::interval)
-                        ORDER BY enqueued_at
-                        FOR UPDATE SKIP LOCKED
-                        LIMIT :batchSize
-                    )
-                    UPDATE pending_downloads
-                    SET status = 'CLAIMED', claimed_at = CURRENT_TIMESTAMP
-                    FROM claimable
-                    WHERE pending_downloads.instagram_account_id = claimable.instagram_account_id
-                      AND pending_downloads.instagram_media_id = claimable.instagram_media_id
-                    RETURNING pending_downloads.instagram_account_id, pending_downloads.instagram_media_id, claimable.previous_status
-                    """.trimIndent(),
-                ).bind("batchSize", batchSize)
-                .bind("leaseSeconds", leaseSeconds)
-                .mapTo<PendingDownload>()
-                .list()
-        }
-
-    fun markComplete(
-        accountId: String,
-        mediaId: String,
-    ) {
-        jdbi.useHandle<Exception> { handle ->
-            handle
-                .createUpdate(
-                    """
-                    UPDATE pending_downloads
-                    SET status = 'COMPLETE', completed_at = CURRENT_TIMESTAMP
-                    WHERE instagram_account_id = :accountId AND instagram_media_id = :mediaId
-                    """.trimIndent(),
-                ).bind("accountId", accountId)
-                .bind("mediaId", mediaId)
-                .execute()
-        }
-    }
-
-    /**
-     * Whether [mediaId] still belongs to at least one gallery - checked right before downloading,
-     * since an item can sit in the queue for an unbounded time between enqueue and claim, and an
-     * admin may have removed it from every gallery in the meantime.
-     */
-    fun isStillInAnyGallery(mediaId: String): Boolean =
-        jdbi.withHandle<Boolean, Exception> { handle ->
-            handle
-                .createQuery("SELECT EXISTS (SELECT 1 FROM gallery_items WHERE instagram_media_id = :mediaId)")
-                .bind("mediaId", mediaId)
-                .mapTo<Boolean>()
-                .one()
-        }
-
-    /** Purges `COMPLETE` rows older than [retentionHours], kept until then purely for operator visibility. */
-    fun deleteOldCompleted(retentionHours: Long): Int =
-        jdbi.withHandle<Int, Exception> { handle ->
-            handle
-                .createUpdate(
-                    """
-                    DELETE FROM pending_downloads
-                    WHERE status = 'COMPLETE' AND completed_at <= now() - (:retentionHours || ' hours')::interval
-                    """.trimIndent(),
-                ).bind("retentionHours", retentionHours)
-                .execute()
-        }
 }
 
 /** One row of `instagram_post_media`, scoped down to just the S3 paths needed for eviction's S3 delete. */
@@ -713,6 +387,38 @@ class InstagramPostRepository(
      * would occupy bucket space forever while being invisible. It should be unreachable; this
      * exists purely so `SyncPipeline` can warn instead of leaking in silence.
      */
+    fun exists(id: Uuid): Boolean =
+        jdbi.withHandle<Boolean, Exception> { h ->
+            h
+                .createQuery("SELECT EXISTS (SELECT 1 FROM instagram_posts WHERE id=:id)")
+                .bind("id", id)
+                .mapTo<Boolean>()
+                .one()
+        }
+
+    /** Capture keys before row-first deletion, including catalog thumbnails. */
+    fun vanishedKeys(
+        accountId: String,
+        ids: Set<String>,
+    ): Map<String, List<String>> {
+        if (ids.isEmpty()) return emptyMap()
+        return jdbi.withHandle<Map<String, List<String>>, Exception> { h ->
+            h
+                .createQuery(
+                    """
+                    SELECT c.instagram_media_id,c.thumbnail_path,m.small_path,m.large_path,m.video_path
+                    FROM instagram_media_catalog c LEFT JOIN instagram_posts p ON p.instagram_media_id=c.instagram_media_id AND p.instagram_account_id=c.instagram_account_id
+                    LEFT JOIN instagram_post_media m ON m.post_id=p.id WHERE c.instagram_account_id=:account AND c.instagram_media_id=ANY(:ids)
+                    """.trimIndent(),
+                ).bind("account", accountId)
+                .bindArray("ids", String::class.java, ids)
+                .map { rs, _ -> rs.getString(1) to (2..5).mapNotNull { rs.getString(it) } }
+                .list()
+                .groupBy({ it.first }, { it.second })
+                .mapValues { (_, groups) -> groups.flatten().distinct() }
+        }
+    }
+
     fun countOrphanedPosts(accountId: String): Int =
         jdbi.withHandle<Int, Exception> { handle ->
             handle
@@ -776,7 +482,7 @@ class SyncConfigurationRepository(
      * Atomically claims a periodic job slot: returns true (and stamps [now]) only if [key] was last
      * claimed more than [intervalSeconds] ago, false otherwise.
      *
-     * This is what stops several `ingestion-service` instances sharing one database and bucket from
+     * This is what stops repeated maintenance polls from
      * all running the same expensive sweep on the same schedule - the `WHERE` on the conflict target
      * makes the read-and-write one statement, so exactly one caller can win. The stamp is written
      * *before* the work runs, so a crash mid-job simply defers the next attempt by one interval
@@ -1212,40 +918,22 @@ class CatalogRepository(
     }
 }
 
-/**
- * Every S3 object key the database knows about, across **all** accounts.
- *
- * Deliberately not account-scoped, and that is the whole point. Object keys are
- * `posts/{instagramMediaId}/...` and `catalog/{instagramMediaId}/...` with no account segment in
- * them, so a bucket listing cannot be attributed to one account. A sweeper holding only one
- * account's keys would classify every sibling account's media as an orphan and delete it.
- *
- * The corollary is a deployment constraint worth stating plainly: **one bucket per database**.
- * Pointing two ingestion deployments backed by *separate* databases at a shared bucket would have
- * each sweeper delete the other's objects, because neither database can vouch for the other's keys.
- */
+/** Account-scoped keys; listings are additionally restricted to this account's fixed prefix. */
 class ObjectKeyRepository(
     private val jdbi: Jdbi,
 ) {
-    /**
-     * Peak memory is one string per object (~60 bytes each: ~600KB at 10k objects, ~6MB at 100k),
-     * which is why the sweeper streams the *listing* past this set rather than materialising both.
-     * Keep it that way - holding the listing too is what would break the heap budget.
-     */
-    fun allKnownKeys(): Set<String> =
-        jdbi.withHandle<Set<String>, Exception> { handle ->
-            handle
+    fun allKnownKeys(accountId: String): Set<String> =
+        jdbi.withHandle<Set<String>, Exception> { h ->
+            h
                 .createQuery(
                     """
-                    SELECT small_path AS key FROM instagram_post_media
-                    UNION
-                    SELECT large_path FROM instagram_post_media
-                    UNION
-                    SELECT video_path FROM instagram_post_media WHERE video_path IS NOT NULL
-                    UNION
-                    SELECT thumbnail_path FROM instagram_media_catalog WHERE thumbnail_path IS NOT NULL
+                    SELECT m.small_path AS key FROM instagram_post_media m JOIN instagram_posts p ON p.id=m.post_id WHERE p.instagram_account_id=:account
+                    UNION SELECT m.large_path FROM instagram_post_media m JOIN instagram_posts p ON p.id=m.post_id WHERE p.instagram_account_id=:account
+                    UNION SELECT m.video_path FROM instagram_post_media m JOIN instagram_posts p ON p.id=m.post_id WHERE p.instagram_account_id=:account AND m.video_path IS NOT NULL
+                    UNION SELECT thumbnail_path FROM instagram_media_catalog WHERE instagram_account_id=:account AND thumbnail_path IS NOT NULL
                     """.trimIndent(),
-                ).mapTo<String>()
+                ).bind("account", accountId)
+                .mapTo<String>()
                 .toSet()
         }
 }

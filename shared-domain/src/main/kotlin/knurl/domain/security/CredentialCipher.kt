@@ -12,17 +12,10 @@ private const val AES_256_KEY_BYTES = 32
 private const val TRANSFORMATION = "AES/GCM/NoPadding"
 
 /**
- * AES-256-GCM encryption for `auth_config.access_token_encrypted` - the one credential that
- * cannot be hashed the way [TokenHasher] hashes the admin token, because ingestion-service must
- * recover it in full to replay it to Meta's Graph API on every sync cycle.
- *
- * The key comes from `CREDENTIAL_ENCRYPTION_KEY` (32 raw bytes, base64-encoded), configured
- * independently of the database - it is never stored alongside the ciphertext it protects, so a
- * database dump alone (the same threat [TokenHasher] defends against) does not yield a usable
- * access token.
- *
- * Each call to [encrypt] draws a fresh random IV (GCM never reuses a key+IV pair safely) and
- * prepends it to the ciphertext, so [decrypt] needs nothing beyond the stored value and the key.
+ * AES-256-GCM for recoverable Instagram, admin, and S3 secret credentials. Each encryption uses
+ * a fresh random IV, prepended to the authenticated ciphertext. CREDENTIAL_ENCRYPTION_KEY is
+ * 32 base64-encoded raw bytes kept outside the database; a database dump cannot decrypt secrets.
+ * Read tokens remain plaintext. Token fingerprints enforce uniqueness, not secret recovery.
  */
 class CredentialCipher(
     base64Key: String,

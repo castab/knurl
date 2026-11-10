@@ -1,0 +1,3071 @@
+{
+  "info" : {
+    "title" : "Knurl",
+    "version" : "v1.0",
+    "description" : null,
+    "summary" : null,
+    "license" : null
+  },
+  "tags" : [ ],
+  "servers" : [ {
+    "url" : "/",
+    "description" : null
+  } ],
+  "paths" : {
+    "/api/v1/accounts/{accountId}/galleries" : {
+      "get" : {
+        "summary" : "List an account's galleries",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "page",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "data" : [ {
+                    "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+                    "name" : "Travel",
+                    "itemCount" : 24,
+                    "publishedCount" : 22,
+                    "createdAt" : "2024-01-01T00:00:00Z",
+                    "updatedAt" : "2024-01-02T00:00:00Z"
+                  } ],
+                  "pagination" : {
+                    "totalRecords" : 100,
+                    "currentPage" : 2,
+                    "totalPages" : 10,
+                    "links" : {
+                      "first" : "/api/v1/accounts/{accountId}/galleries?page=1",
+                      "prev" : "/api/v1/accounts/{accountId}/galleries?page=1",
+                      "self" : "/api/v1/accounts/{accountId}/galleries?page=2",
+                      "next" : "/api/v1/accounts/{accountId}/galleries?page=3",
+                      "last" : "/api/v1/accounts/{accountId}/galleries?page=10"
+                    }
+                  }
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/GalleryListResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountReadBearer" : [ ]
+        } ],
+        "operationId" : "getApiV1Accounts_accountId_Galleries",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/accounts/{accountId}/galleries/by-name/{name}" : {
+      "get" : {
+        "summary" : "Look up a page of one gallery's posts by name, sorted by curator rank, recency, or view count",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "query",
+          "name" : "sort",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "page",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "name",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "gallery" : {
+                    "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+                    "name" : "Travel",
+                    "itemCount" : 24,
+                    "publishedCount" : 22,
+                    "createdAt" : "2024-01-01T00:00:00Z",
+                    "updatedAt" : "2024-01-02T00:00:00Z"
+                  },
+                  "data" : [ {
+                    "id" : "01234567-89ab-cdef-0123-456789abcdef",
+                    "mediaType" : "IMAGE",
+                    "caption" : "An example caption",
+                    "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+                    "timestamp" : "2024-01-01T00:00:00Z",
+                    "mediaItems" : [ {
+                      "mediaType" : "IMAGE",
+                      "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+                      "smallFileSizeBytes" : 18432,
+                      "smallWidth" : 400,
+                      "smallHeight" : 400,
+                      "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+                      "largeFileSizeBytes" : 84736,
+                      "largeWidth" : 800,
+                      "largeHeight" : 600,
+                      "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+                      "videoFileSizeBytes" : 1048576,
+                      "videoWidth" : 1920,
+                      "videoHeight" : 1080,
+                      "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+                    } ],
+                    "viewCount" : 0,
+                    "clickCount" : 0,
+                    "sortOrder" : 0
+                  } ],
+                  "pagination" : {
+                    "totalRecords" : 100,
+                    "currentPage" : 2,
+                    "totalPages" : 10,
+                    "links" : {
+                      "first" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=1",
+                      "prev" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=1",
+                      "self" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=2",
+                      "next" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=3",
+                      "last" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=10"
+                    }
+                  }
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/GalleryResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountReadBearer" : [ ]
+        } ],
+        "operationId" : "getApiV1Accounts_accountId_GalleriesBy_name_name",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/accounts/{accountId}/galleries/{galleryId}" : {
+      "get" : {
+        "summary" : "List a page of one gallery's posts, sorted by curator rank, recency, or view count",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "query",
+          "name" : "sort",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "page",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "galleryId",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "gallery" : {
+                    "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+                    "name" : "Travel",
+                    "itemCount" : 24,
+                    "publishedCount" : 22,
+                    "createdAt" : "2024-01-01T00:00:00Z",
+                    "updatedAt" : "2024-01-02T00:00:00Z"
+                  },
+                  "data" : [ {
+                    "id" : "01234567-89ab-cdef-0123-456789abcdef",
+                    "mediaType" : "IMAGE",
+                    "caption" : "An example caption",
+                    "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+                    "timestamp" : "2024-01-01T00:00:00Z",
+                    "mediaItems" : [ {
+                      "mediaType" : "IMAGE",
+                      "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+                      "smallFileSizeBytes" : 18432,
+                      "smallWidth" : 400,
+                      "smallHeight" : 400,
+                      "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+                      "largeFileSizeBytes" : 84736,
+                      "largeWidth" : 800,
+                      "largeHeight" : 600,
+                      "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+                      "videoFileSizeBytes" : 1048576,
+                      "videoWidth" : 1920,
+                      "videoHeight" : 1080,
+                      "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+                    } ],
+                    "viewCount" : 0,
+                    "clickCount" : 0,
+                    "sortOrder" : 0
+                  } ],
+                  "pagination" : {
+                    "totalRecords" : 100,
+                    "currentPage" : 2,
+                    "totalPages" : 10,
+                    "links" : {
+                      "first" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=1",
+                      "prev" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=1",
+                      "self" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=2",
+                      "next" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=3",
+                      "last" : "/api/v1/accounts/{accountId}/galleries/{galleryId}?page=10"
+                    }
+                  }
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/GalleryResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountReadBearer" : [ ]
+        } ],
+        "operationId" : "getApiV1Accounts_accountId_Galleries_galleryId",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/accounts/{accountId}/galleries/{galleryId}/track" : {
+      "post" : {
+        "summary" : "Record a view or click analytics event for a post within a gallery",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "galleryId",
+          "required" : true,
+          "description" : null
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "example" : {
+                "id" : "01234567-89ab-cdef-0123-456789abcdef",
+                "event" : "view"
+              },
+              "schema" : {
+                "$ref" : "#/components/schemas/TrackRequest",
+                "example" : null,
+                "format" : null
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "status" : "ok"
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/TrackResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountReadBearer" : [ ]
+        } ],
+        "operationId" : "postApiV1Accounts_accountId_Galleries_galleryId_Track",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/catalog" : {
+      "get" : {
+        "summary" : "List a page of catalog entries for an account, optionally filtered",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "query",
+          "name" : "galleryId",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "query",
+          "name" : "inAnyGallery",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "query",
+          "name" : "includeNotDigestible",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "in" : "query",
+          "name" : "mediaType",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "page",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "data" : [ {
+                    "shortcode" : "Cabc123XYZ",
+                    "mediaType" : "IMAGE",
+                    "caption" : "An example caption",
+                    "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+                    "timestamp" : "2024-01-01T00:00:00Z",
+                    "galleryIds" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
+                    "gallerySortOrders" : {
+                      "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" : 0
+                    },
+                    "notDigestibleReason" : "copyright",
+                    "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
+                    "deselectedAt" : "2024-01-02T00:00:00Z",
+                    "purgeRequestedAt" : "2024-01-03T00:00:00Z"
+                  } ],
+                  "pagination" : {
+                    "totalRecords" : 100,
+                    "currentPage" : 2,
+                    "totalPages" : 10,
+                    "links" : {
+                      "first" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+                      "prev" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+                      "self" : "/api/v1/admin/accounts/{accountId}/catalog?page=2",
+                      "next" : "/api/v1/admin/accounts/{accountId}/catalog?page=3",
+                      "last" : "/api/v1/admin/accounts/{accountId}/catalog?page=10"
+                    }
+                  }
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/AdminCatalogResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "getApiV1AdminAccounts_accountId_Catalog",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/catalog/media" : {
+      "delete" : {
+        "summary" : "Delete the downloaded media of catalog entries outright, skipping the retention grace period",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "example" : {
+                "shortcodes" : [ "Cabc123XYZ", "Cdef456UVW" ]
+              },
+              "schema" : {
+                "$ref" : "#/components/schemas/MediaPurgeRequest",
+                "example" : null,
+                "format" : null
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "202" : {
+            "description" : "Accepted",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "requestedCount" : 2,
+                  "acceptedCount" : 1,
+                  "results" : [ {
+                    "shortcode" : "Cabc123XYZ",
+                    "status" : "ACCEPTED"
+                  }, {
+                    "shortcode" : "Cdef456UVW",
+                    "status" : "NOT_DOWNLOADED"
+                  } ]
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/MediaPurgeResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "deleteApiV1AdminAccounts_accountId_CatalogMedia",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/galleries" : {
+      "post" : {
+        "summary" : "Create a named gallery",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "example" : {
+                "name" : "Travel"
+              },
+              "schema" : {
+                "$ref" : "#/components/schemas/GalleryWriteRequest",
+                "example" : null,
+                "format" : null
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "201" : {
+            "description" : "Created",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+                  "name" : "Travel",
+                  "itemCount" : 24,
+                  "publishedCount" : 22,
+                  "createdAt" : "2024-01-01T00:00:00Z",
+                  "updatedAt" : "2024-01-02T00:00:00Z"
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/GallerySummaryResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "postApiV1AdminAccounts_accountId_Galleries",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/galleries/{galleryId}" : {
+      "delete" : {
+        "summary" : "Delete a gallery; a non-empty one requires force=true",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "query",
+          "name" : "force",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "galleryId",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "name" : "Travel",
+                  "itemsRemoved" : 24,
+                  "itemsReleased" : 7
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/GalleryDeleteResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "deleteApiV1AdminAccounts_accountId_Galleries_galleryId",
+        "deprecated" : false,
+        "callbacks" : null
+      },
+      "patch" : {
+        "summary" : "Rename a gallery, keeping its id and content",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "galleryId",
+          "required" : true,
+          "description" : null
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "example" : {
+                "name" : "Travel 2024"
+              },
+              "schema" : {
+                "$ref" : "#/components/schemas/GalleryWriteRequest",
+                "example" : null,
+                "format" : null
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+                  "name" : "Travel",
+                  "itemCount" : 24,
+                  "publishedCount" : 22,
+                  "createdAt" : "2024-01-01T00:00:00Z",
+                  "updatedAt" : "2024-01-02T00:00:00Z"
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/GallerySummaryResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "patchApiV1AdminAccounts_accountId_Galleries_galleryId",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/galleries/{galleryId}/items" : {
+      "patch" : {
+        "summary" : "Add, remove, or rank a gallery's items by shortcode",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "galleryId",
+          "required" : true,
+          "description" : null
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "example" : {
+                "add" : [ "Cabc123XYZ" ],
+                "remove" : [ "Cdef456UVW" ],
+                "sortOrders" : {
+                  "Cabc123XYZ" : 0
+                },
+                "clearSortOrders" : [ "Cghi789RST" ]
+              },
+              "schema" : {
+                "$ref" : "#/components/schemas/GalleryItemsRequest",
+                "example" : null,
+                "format" : null
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "added" : [ "Cabc123XYZ" ],
+                  "alreadyPresent" : [ "Cghi789RST" ],
+                  "removed" : [ "Cdef456UVW" ],
+                  "sortOrdersUpdated" : [ "Cabc123XYZ", "Cghi789RST" ],
+                  "notFound" : [ "Cjkl012MNO" ]
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/GalleryItemsResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "patchApiV1AdminAccounts_accountId_Galleries_galleryId_Items",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/ingestion/jobs" : {
+      "get" : {
+        "summary" : "List this account's ingestion history",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "page",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "data" : [ {
+                    "id" : "019a0000-0000-7000-8000-000000000001",
+                    "instagramAccountId" : "17841400000000000",
+                    "source" : "MANUAL",
+                    "status" : "PARTIAL",
+                    "phase" : "PARTIAL",
+                    "createdAt" : "2026-11-09T00:00:00Z",
+                    "startedAt" : "2026-11-09T00:00:01Z",
+                    "completedAt" : "2026-11-09T00:01:00Z",
+                    "errorCode" : "ITEM_FAILURES",
+                    "attempts" : 3,
+                    "succeeded" : 2,
+                    "skipped" : 0,
+                    "failed" : 1,
+                    "pending" : 0
+                  } ],
+                  "pagination" : {
+                    "totalRecords" : 100,
+                    "currentPage" : 2,
+                    "totalPages" : 10,
+                    "links" : {
+                      "first" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs?page=1",
+                      "prev" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs?page=1",
+                      "self" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs?page=2",
+                      "next" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs?page=3",
+                      "last" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs?page=10"
+                    }
+                  }
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/JobListResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "getApiV1AdminAccounts_accountId_IngestionJobs",
+        "deprecated" : false,
+        "callbacks" : null
+      },
+      "post" : {
+        "summary" : "Queue ingestion or return this account's existing active job",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "202" : {
+            "description" : "Accepted",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "id" : "019a0000-0000-7000-8000-000000000001",
+                  "instagramAccountId" : "17841400000000000",
+                  "source" : "MANUAL",
+                  "status" : "PARTIAL",
+                  "phase" : "PARTIAL",
+                  "createdAt" : "2026-11-09T00:00:00Z",
+                  "startedAt" : "2026-11-09T00:00:01Z",
+                  "completedAt" : "2026-11-09T00:01:00Z",
+                  "errorCode" : "ITEM_FAILURES",
+                  "attempts" : 3,
+                  "succeeded" : 2,
+                  "skipped" : 0,
+                  "failed" : 1,
+                  "pending" : 0
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/JobResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "postApiV1AdminAccounts_accountId_IngestionJobs",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}" : {
+      "get" : {
+        "summary" : "Read job progress and a page of item outcomes",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "page",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "jobId",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "job" : {
+                    "id" : "019a0000-0000-7000-8000-000000000001",
+                    "instagramAccountId" : "17841400000000000",
+                    "source" : "MANUAL",
+                    "status" : "PARTIAL",
+                    "phase" : "PARTIAL",
+                    "createdAt" : "2026-11-09T00:00:00Z",
+                    "startedAt" : "2026-11-09T00:00:01Z",
+                    "completedAt" : "2026-11-09T00:01:00Z",
+                    "errorCode" : "ITEM_FAILURES",
+                    "attempts" : 3,
+                    "succeeded" : 2,
+                    "skipped" : 0,
+                    "failed" : 1,
+                    "pending" : 0
+                  },
+                  "data" : [ {
+                    "phase" : "DOWNLOAD",
+                    "itemId" : "example",
+                    "status" : "FAILED",
+                    "attempts" : 3,
+                    "retryAt" : "2026-11-09T00:00:30Z",
+                    "errorCode" : "MEDIA_NOT_READY"
+                  } ],
+                  "pagination" : {
+                    "totalRecords" : 100,
+                    "currentPage" : 2,
+                    "totalPages" : 10,
+                    "links" : {
+                      "first" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=1",
+                      "prev" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=1",
+                      "self" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=2",
+                      "next" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=3",
+                      "last" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=10"
+                    }
+                  }
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/JobDetailResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "getApiV1AdminAccounts_accountId_IngestionJobs_jobId",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/ingestion/schedule" : {
+      "get" : {
+        "summary" : "Read this account's ingestion schedule",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "enabled" : true,
+                  "intervalSeconds" : 900,
+                  "nextRunAt" : "2030-01-01T00:00:00Z"
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/ScheduleResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "getApiV1AdminAccounts_accountId_IngestionSchedule",
+        "deprecated" : false,
+        "callbacks" : null
+      },
+      "put" : {
+        "summary" : "Enable or disable interval ingestion; minimum interval is 300 seconds",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "example" : {
+                "enabled" : true
+              },
+              "schema" : {
+                "$ref" : "#/components/schemas/ScheduleRequest",
+                "example" : null,
+                "format" : null
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "enabled" : true,
+                  "intervalSeconds" : 900,
+                  "nextRunAt" : "2030-01-01T00:00:00Z"
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/ScheduleResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "accountAdminBearer" : [ ]
+        } ],
+        "operationId" : "putApiV1AdminAccounts_accountId_IngestionSchedule",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/management/accounts" : {
+      "get" : {
+        "summary" : "List registered accounts without disclosing secret credentials",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "description" : null
+        }, {
+          "schema" : {
+            "type" : "integer"
+          },
+          "in" : "query",
+          "name" : "page",
+          "required" : false,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "data" : [ {
+                    "instagramAccountId" : "17841400000000000",
+                    "enabled" : true,
+                    "readToken" : "example-read-token",
+                    "hasAdminToken" : true,
+                    "hasInstagramAccessToken" : true,
+                    "instagramTokenExpiresAt" : "2030-01-01T00:00:00Z",
+                    "storage" : {
+                      "bucketName" : "account-media",
+                      "region" : "us-east-1",
+                      "endpoint" : "https://s3.example.com",
+                      "accessKeyId" : "example-access-key",
+                      "pathStyleAccess" : false
+                    },
+                    "scheduleEnabled" : false,
+                    "intervalSeconds" : 900,
+                    "nextRunAt" : "2030-01-01T00:00:00Z",
+                    "createdAt" : "2026-11-09T00:00:00Z"
+                  } ],
+                  "pagination" : {
+                    "totalRecords" : 100,
+                    "currentPage" : 2,
+                    "totalPages" : 10,
+                    "links" : {
+                      "first" : "/api/v1/management/accounts?page=1",
+                      "prev" : "/api/v1/management/accounts?page=1",
+                      "self" : "/api/v1/management/accounts?page=2",
+                      "next" : "/api/v1/management/accounts?page=3",
+                      "last" : "/api/v1/management/accounts?page=10"
+                    }
+                  }
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/ManagedAccountListResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "deploymentManagementBearer" : [ ]
+        } ],
+        "operationId" : "getApiV1ManagementAccounts",
+        "deprecated" : false,
+        "callbacks" : null
+      },
+      "post" : {
+        "summary" : "Register an account with encrypted credentials and account-owned S3 storage",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "example" : {
+                "instagramAccountId" : "17841400000000000",
+                "readToken" : "example-read-token",
+                "adminToken" : "example-admin-token",
+                "instagramAccessToken" : "example-instagram-token",
+                "instagramTokenExpiresAt" : "2030-01-01T00:00:00Z",
+                "storage" : {
+                  "bucketName" : "account-media",
+                  "region" : "us-east-1",
+                  "accessKeyId" : "example-access-key",
+                  "secretAccessKey" : "example-secret-key",
+                  "endpoint" : "https://s3.example.com"
+                }
+              },
+              "schema" : {
+                "$ref" : "#/components/schemas/RegisterAccountRequest",
+                "example" : null,
+                "format" : null
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "201" : {
+            "description" : "Created",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "instagramAccountId" : "17841400000000000",
+                  "enabled" : true,
+                  "readToken" : "example-read-token",
+                  "hasAdminToken" : true,
+                  "hasInstagramAccessToken" : true,
+                  "instagramTokenExpiresAt" : "2030-01-01T00:00:00Z",
+                  "storage" : {
+                    "bucketName" : "account-media",
+                    "region" : "us-east-1",
+                    "endpoint" : "https://s3.example.com",
+                    "accessKeyId" : "example-access-key",
+                    "pathStyleAccess" : false
+                  },
+                  "scheduleEnabled" : false,
+                  "intervalSeconds" : 900,
+                  "nextRunAt" : "2030-01-01T00:00:00Z",
+                  "createdAt" : "2026-11-09T00:00:00Z"
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/ManagedAccountResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "deploymentManagementBearer" : [ ]
+        } ],
+        "operationId" : "postApiV1ManagementAccounts",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/api/v1/management/accounts/{accountId}" : {
+      "get" : {
+        "summary" : "Inspect account configuration; secrets remain write-only",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "instagramAccountId" : "17841400000000000",
+                  "enabled" : true,
+                  "readToken" : "example-read-token",
+                  "hasAdminToken" : true,
+                  "hasInstagramAccessToken" : true,
+                  "instagramTokenExpiresAt" : "2030-01-01T00:00:00Z",
+                  "storage" : {
+                    "bucketName" : "account-media",
+                    "region" : "us-east-1",
+                    "endpoint" : "https://s3.example.com",
+                    "accessKeyId" : "example-access-key",
+                    "pathStyleAccess" : false
+                  },
+                  "scheduleEnabled" : false,
+                  "intervalSeconds" : 900,
+                  "nextRunAt" : "2030-01-01T00:00:00Z",
+                  "createdAt" : "2026-11-09T00:00:00Z"
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/ManagedAccountResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "deploymentManagementBearer" : [ ]
+        } ],
+        "operationId" : "getApiV1ManagementAccounts_accountId",
+        "deprecated" : false,
+        "callbacks" : null
+      },
+      "patch" : {
+        "summary" : "Replace account credentials, configure storage, or enable/disable an account",
+        "description" : "Instagram token and expiry must be replaced together. Storage replacement requires the complete configuration, including its secret. Destination changes are rejected while storage is in use.",
+        "tags" : [ "" ],
+        "parameters" : [ {
+          "schema" : {
+            "type" : "string"
+          },
+          "in" : "path",
+          "name" : "accountId",
+          "required" : true,
+          "description" : null
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "example" : {
+                "enabled" : true,
+                "readToken" : "replacement-read-token",
+                "adminToken" : "replacement-admin-token",
+                "instagramAccessToken" : "replacement-instagram-token",
+                "instagramTokenExpiresAt" : "2030-01-01T00:00:00Z",
+                "storage" : {
+                  "bucketName" : "account-media",
+                  "region" : "us-east-1",
+                  "accessKeyId" : "example-access-key",
+                  "secretAccessKey" : "example-secret-key",
+                  "endpoint" : "https://s3.example.com"
+                }
+              },
+              "schema" : {
+                "$ref" : "#/components/schemas/UpdateAccountRequest",
+                "example" : null,
+                "format" : null
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "instagramAccountId" : "17841400000000000",
+                  "enabled" : true,
+                  "readToken" : "example-read-token",
+                  "hasAdminToken" : true,
+                  "hasInstagramAccessToken" : true,
+                  "instagramTokenExpiresAt" : "2030-01-01T00:00:00Z",
+                  "storage" : {
+                    "bucketName" : "account-media",
+                    "region" : "us-east-1",
+                    "endpoint" : "https://s3.example.com",
+                    "accessKeyId" : "example-access-key",
+                    "pathStyleAccess" : false
+                  },
+                  "scheduleEnabled" : false,
+                  "intervalSeconds" : 900,
+                  "nextRunAt" : "2030-01-01T00:00:00Z",
+                  "createdAt" : "2026-11-09T00:00:00Z"
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/ManagedAccountResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "deploymentManagementBearer" : [ ]
+        } ],
+        "operationId" : "patchApiV1ManagementAccounts_accountId",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    },
+    "/health" : {
+      "get" : {
+        "summary" : "Report whether the application can reach its database",
+        "description" : null,
+        "tags" : [ "" ],
+        "parameters" : [ ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "status" : "ok"
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/HealthResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          },
+          "503" : {
+            "description" : "Service Unavailable",
+            "content" : {
+              "application/json" : {
+                "example" : {
+                  "status" : "unavailable"
+                },
+                "schema" : {
+                  "$ref" : "#/components/schemas/HealthResponse",
+                  "example" : null,
+                  "format" : null
+                }
+              }
+            }
+          }
+        },
+        "security" : [ ],
+        "operationId" : "getHealth",
+        "deprecated" : false,
+        "callbacks" : null
+      }
+    }
+  },
+  "webhooks" : null,
+  "components" : {
+    "schemas" : {
+      "GalleryListResponse" : {
+        "properties" : {
+          "data" : {
+            "items" : {
+              "$ref" : "#/components/schemas/GallerySummaryResponse"
+            },
+            "example" : [ {
+              "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+              "name" : "Travel",
+              "itemCount" : 24,
+              "publishedCount" : 22,
+              "createdAt" : "2024-01-01T00:00:00Z",
+              "updatedAt" : "2024-01-02T00:00:00Z"
+            } ],
+            "format" : null,
+            "type" : "array"
+          },
+          "pagination" : {
+            "$ref" : "#/components/schemas/PaginationMeta",
+            "example" : null,
+            "format" : null
+          }
+        },
+        "example" : {
+          "data" : [ {
+            "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+            "name" : "Travel",
+            "itemCount" : 24,
+            "publishedCount" : 22,
+            "createdAt" : "2024-01-01T00:00:00Z",
+            "updatedAt" : "2024-01-02T00:00:00Z"
+          } ],
+          "pagination" : {
+            "totalRecords" : 100,
+            "currentPage" : 2,
+            "totalPages" : 10,
+            "links" : {
+              "first" : "/api/v1/accounts/{accountId}/galleries?page=1",
+              "prev" : "/api/v1/accounts/{accountId}/galleries?page=1",
+              "self" : "/api/v1/accounts/{accountId}/galleries?page=2",
+              "next" : "/api/v1/accounts/{accountId}/galleries?page=3",
+              "last" : "/api/v1/accounts/{accountId}/galleries?page=10"
+            }
+          }
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "data", "pagination" ]
+      },
+      "GallerySummaryResponse" : {
+        "properties" : {
+          "id" : {
+            "example" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+            "format" : null,
+            "type" : "string"
+          },
+          "name" : {
+            "example" : "Travel",
+            "format" : null,
+            "type" : "string"
+          },
+          "itemCount" : {
+            "example" : 24,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "publishedCount" : {
+            "example" : 22,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "createdAt" : {
+            "example" : "2024-01-01T00:00:00Z",
+            "format" : null,
+            "type" : "string"
+          },
+          "updatedAt" : {
+            "example" : "2024-01-02T00:00:00Z",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+          "name" : "Travel",
+          "itemCount" : 24,
+          "publishedCount" : 22,
+          "createdAt" : "2024-01-01T00:00:00Z",
+          "updatedAt" : "2024-01-02T00:00:00Z"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "createdAt", "id", "itemCount", "name", "publishedCount", "updatedAt" ]
+      },
+      "PaginationMeta" : {
+        "properties" : {
+          "totalRecords" : {
+            "example" : 100,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "currentPage" : {
+            "example" : 2,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "totalPages" : {
+            "example" : 10,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "links" : {
+            "$ref" : "#/components/schemas/PaginationLinks",
+            "example" : null,
+            "format" : null
+          }
+        },
+        "example" : {
+          "totalRecords" : 100,
+          "currentPage" : 2,
+          "totalPages" : 10,
+          "links" : {
+            "first" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=1",
+            "prev" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=1",
+            "self" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=2",
+            "next" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=3",
+            "last" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=10"
+          }
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "currentPage", "links", "totalPages", "totalRecords" ]
+      },
+      "PaginationLinks" : {
+        "properties" : {
+          "first" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=1",
+            "format" : null,
+            "type" : "string"
+          },
+          "prev" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=1",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "self" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=2",
+            "format" : null,
+            "type" : "string"
+          },
+          "next" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=3",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "last" : {
+            "example" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=10",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "first" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=1",
+          "prev" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=1",
+          "self" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=2",
+          "next" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=3",
+          "last" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=10"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "first", "last", "self" ]
+      },
+      "GalleryResponse" : {
+        "properties" : {
+          "gallery" : {
+            "$ref" : "#/components/schemas/GallerySummaryResponse",
+            "example" : null,
+            "format" : null
+          },
+          "data" : {
+            "items" : {
+              "$ref" : "#/components/schemas/GalleryItemResponse"
+            },
+            "example" : [ {
+              "id" : "01234567-89ab-cdef-0123-456789abcdef",
+              "mediaType" : "IMAGE",
+              "caption" : "An example caption",
+              "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+              "timestamp" : "2024-01-01T00:00:00Z",
+              "mediaItems" : [ {
+                "mediaType" : "IMAGE",
+                "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+                "smallFileSizeBytes" : 18432,
+                "smallWidth" : 400,
+                "smallHeight" : 400,
+                "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+                "largeFileSizeBytes" : 84736,
+                "largeWidth" : 800,
+                "largeHeight" : 600,
+                "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+                "videoFileSizeBytes" : 1048576,
+                "videoWidth" : 1920,
+                "videoHeight" : 1080,
+                "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+              } ],
+              "viewCount" : 0,
+              "clickCount" : 0,
+              "sortOrder" : 0
+            } ],
+            "format" : null,
+            "type" : "array"
+          },
+          "pagination" : {
+            "$ref" : "#/components/schemas/PaginationMeta",
+            "example" : null,
+            "format" : null
+          }
+        },
+        "example" : {
+          "gallery" : {
+            "id" : "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+            "name" : "Travel",
+            "itemCount" : 24,
+            "publishedCount" : 22,
+            "createdAt" : "2024-01-01T00:00:00Z",
+            "updatedAt" : "2024-01-02T00:00:00Z"
+          },
+          "data" : [ {
+            "id" : "01234567-89ab-cdef-0123-456789abcdef",
+            "mediaType" : "IMAGE",
+            "caption" : "An example caption",
+            "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+            "timestamp" : "2024-01-01T00:00:00Z",
+            "mediaItems" : [ {
+              "mediaType" : "IMAGE",
+              "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+              "smallFileSizeBytes" : 18432,
+              "smallWidth" : 400,
+              "smallHeight" : 400,
+              "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+              "largeFileSizeBytes" : 84736,
+              "largeWidth" : 800,
+              "largeHeight" : 600,
+              "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+              "videoFileSizeBytes" : 1048576,
+              "videoWidth" : 1920,
+              "videoHeight" : 1080,
+              "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+            } ],
+            "viewCount" : 0,
+            "clickCount" : 0,
+            "sortOrder" : 0
+          } ],
+          "pagination" : {
+            "totalRecords" : 100,
+            "currentPage" : 2,
+            "totalPages" : 10,
+            "links" : {
+              "first" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=1",
+              "prev" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=1",
+              "self" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=2",
+              "next" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=3",
+              "last" : "/api/v1/accounts/{accountId}/galleries/by-name/{name}?page=10"
+            }
+          }
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "data", "gallery", "pagination" ]
+      },
+      "GalleryItemResponse" : {
+        "properties" : {
+          "id" : {
+            "example" : "01234567-89ab-cdef-0123-456789abcdef",
+            "format" : null,
+            "type" : "string"
+          },
+          "mediaType" : {
+            "example" : "IMAGE",
+            "format" : null,
+            "type" : "string"
+          },
+          "caption" : {
+            "example" : "An example caption",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "permalink" : {
+            "example" : "https://www.instagram.com/p/Cabc123XYZ/",
+            "format" : null,
+            "type" : "string"
+          },
+          "timestamp" : {
+            "example" : "2024-01-01T00:00:00Z",
+            "format" : null,
+            "type" : "string"
+          },
+          "mediaItems" : {
+            "items" : {
+              "$ref" : "#/components/schemas/GalleryMediaItemResponse"
+            },
+            "example" : [ {
+              "mediaType" : "IMAGE",
+              "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+              "smallFileSizeBytes" : 18432,
+              "smallWidth" : 400,
+              "smallHeight" : 400,
+              "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+              "largeFileSizeBytes" : 84736,
+              "largeWidth" : 800,
+              "largeHeight" : 600,
+              "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+              "videoFileSizeBytes" : 1048576,
+              "videoWidth" : 1920,
+              "videoHeight" : 1080,
+              "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+            } ],
+            "format" : null,
+            "type" : "array"
+          },
+          "viewCount" : {
+            "example" : 0,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "clickCount" : {
+            "example" : 0,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "sortOrder" : {
+            "example" : 0,
+            "format" : "int64",
+            "type" : [ "integer", "null" ]
+          }
+        },
+        "example" : {
+          "id" : "01234567-89ab-cdef-0123-456789abcdef",
+          "mediaType" : "IMAGE",
+          "caption" : "An example caption",
+          "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+          "timestamp" : "2024-01-01T00:00:00Z",
+          "mediaItems" : [ {
+            "mediaType" : "IMAGE",
+            "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+            "smallFileSizeBytes" : 18432,
+            "smallWidth" : 400,
+            "smallHeight" : 400,
+            "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+            "largeFileSizeBytes" : 84736,
+            "largeWidth" : 800,
+            "largeHeight" : 600,
+            "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+            "videoFileSizeBytes" : 1048576,
+            "videoWidth" : 1920,
+            "videoHeight" : 1080,
+            "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+          } ],
+          "viewCount" : 0,
+          "clickCount" : 0,
+          "sortOrder" : 0
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "clickCount", "id", "mediaItems", "mediaType", "permalink", "timestamp", "viewCount" ]
+      },
+      "GalleryMediaItemResponse" : {
+        "properties" : {
+          "mediaType" : {
+            "example" : "IMAGE",
+            "format" : null,
+            "type" : "string"
+          },
+          "smallUrl" : {
+            "example" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+            "format" : null,
+            "type" : "string"
+          },
+          "smallFileSizeBytes" : {
+            "example" : 18432,
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "smallWidth" : {
+            "example" : 400,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "smallHeight" : {
+            "example" : 400,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "largeUrl" : {
+            "example" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+            "format" : null,
+            "type" : "string"
+          },
+          "largeFileSizeBytes" : {
+            "example" : 84736,
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "largeWidth" : {
+            "example" : 800,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "largeHeight" : {
+            "example" : 600,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "videoUrl" : {
+            "example" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "videoFileSizeBytes" : {
+            "example" : 1048576,
+            "format" : "int64",
+            "type" : [ "integer", "null" ]
+          },
+          "videoWidth" : {
+            "example" : 1920,
+            "format" : "int32",
+            "type" : [ "integer", "null" ]
+          },
+          "videoHeight" : {
+            "example" : 1080,
+            "format" : "int32",
+            "type" : [ "integer", "null" ]
+          },
+          "mediaUrlExpiresAt" : {
+            "example" : "2024-01-01T06:00:00Z",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "mediaType" : "IMAGE",
+          "smallUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/small.webp",
+          "smallFileSizeBytes" : 18432,
+          "smallWidth" : 400,
+          "smallHeight" : 400,
+          "largeUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/large.webp",
+          "largeFileSizeBytes" : 84736,
+          "largeWidth" : 800,
+          "largeHeight" : 600,
+          "videoUrl" : "https://example-bucket.s3.amazonaws.com/posts/example/0/original",
+          "videoFileSizeBytes" : 1048576,
+          "videoWidth" : 1920,
+          "videoHeight" : 1080,
+          "mediaUrlExpiresAt" : "2024-01-01T06:00:00Z"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "largeFileSizeBytes", "largeHeight", "largeUrl", "largeWidth", "mediaType", "mediaUrlExpiresAt", "smallFileSizeBytes", "smallHeight", "smallUrl", "smallWidth" ]
+      },
+      "TrackResponse" : {
+        "properties" : {
+          "status" : {
+            "example" : "ok",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "status" : "ok"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "status" ]
+      },
+      "TrackRequest" : {
+        "properties" : {
+          "id" : {
+            "example" : "01234567-89ab-cdef-0123-456789abcdef",
+            "format" : null,
+            "type" : "string"
+          },
+          "event" : {
+            "example" : "view",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "id" : "01234567-89ab-cdef-0123-456789abcdef",
+          "event" : "view"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "event", "id" ]
+      },
+      "AdminCatalogResponse" : {
+        "properties" : {
+          "data" : {
+            "items" : {
+              "$ref" : "#/components/schemas/AdminCatalogItemResponse"
+            },
+            "example" : [ {
+              "shortcode" : "Cabc123XYZ",
+              "mediaType" : "IMAGE",
+              "caption" : "An example caption",
+              "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+              "timestamp" : "2024-01-01T00:00:00Z",
+              "galleryIds" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
+              "gallerySortOrders" : {
+                "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" : 0
+              },
+              "notDigestibleReason" : "copyright",
+              "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
+              "deselectedAt" : "2024-01-02T00:00:00Z",
+              "purgeRequestedAt" : "2024-01-03T00:00:00Z"
+            } ],
+            "format" : null,
+            "type" : "array"
+          },
+          "pagination" : {
+            "$ref" : "#/components/schemas/PaginationMeta",
+            "example" : null,
+            "format" : null
+          }
+        },
+        "example" : {
+          "data" : [ {
+            "shortcode" : "Cabc123XYZ",
+            "mediaType" : "IMAGE",
+            "caption" : "An example caption",
+            "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+            "timestamp" : "2024-01-01T00:00:00Z",
+            "galleryIds" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
+            "gallerySortOrders" : {
+              "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" : 0
+            },
+            "notDigestibleReason" : "copyright",
+            "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
+            "deselectedAt" : "2024-01-02T00:00:00Z",
+            "purgeRequestedAt" : "2024-01-03T00:00:00Z"
+          } ],
+          "pagination" : {
+            "totalRecords" : 100,
+            "currentPage" : 2,
+            "totalPages" : 10,
+            "links" : {
+              "first" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+              "prev" : "/api/v1/admin/accounts/{accountId}/catalog?page=1",
+              "self" : "/api/v1/admin/accounts/{accountId}/catalog?page=2",
+              "next" : "/api/v1/admin/accounts/{accountId}/catalog?page=3",
+              "last" : "/api/v1/admin/accounts/{accountId}/catalog?page=10"
+            }
+          }
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "data", "pagination" ]
+      },
+      "AdminCatalogItemResponse" : {
+        "properties" : {
+          "shortcode" : {
+            "example" : "Cabc123XYZ",
+            "format" : null,
+            "type" : "string"
+          },
+          "mediaType" : {
+            "example" : "IMAGE",
+            "format" : null,
+            "type" : "string"
+          },
+          "caption" : {
+            "example" : "An example caption",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "permalink" : {
+            "example" : "https://www.instagram.com/p/Cabc123XYZ/",
+            "format" : null,
+            "type" : "string"
+          },
+          "timestamp" : {
+            "example" : "2024-01-01T00:00:00Z",
+            "format" : null,
+            "type" : "string"
+          },
+          "galleryIds" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "gallerySortOrders" : {
+            "example" : null,
+            "additionalProperties" : {
+              "properties" : {
+                "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" : {
+                  "example" : 0,
+                  "format" : "int64",
+                  "type" : [ "integer", "null" ]
+                }
+              },
+              "example" : {
+                "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" : 0
+              },
+              "format" : null,
+              "type" : "object",
+              "required" : null
+            },
+            "format" : null,
+            "type" : "object"
+          },
+          "notDigestibleReason" : {
+            "example" : "copyright",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "thumbnailUrl" : {
+            "example" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "deselectedAt" : {
+            "example" : "2024-01-02T00:00:00Z",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "purgeRequestedAt" : {
+            "example" : "2024-01-03T00:00:00Z",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          }
+        },
+        "example" : {
+          "shortcode" : "Cabc123XYZ",
+          "mediaType" : "IMAGE",
+          "caption" : "An example caption",
+          "permalink" : "https://www.instagram.com/p/Cabc123XYZ/",
+          "timestamp" : "2024-01-01T00:00:00Z",
+          "galleryIds" : [ "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" ],
+          "gallerySortOrders" : {
+            "01912f4e-1a2b-7c3d-8e4f-5a6b7c8d9e0f" : 0
+          },
+          "notDigestibleReason" : "copyright",
+          "thumbnailUrl" : "https://example-bucket.s3.amazonaws.com/catalog/example/thumbnail.webp",
+          "deselectedAt" : "2024-01-02T00:00:00Z",
+          "purgeRequestedAt" : "2024-01-03T00:00:00Z"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "galleryIds", "gallerySortOrders", "mediaType", "permalink", "shortcode", "timestamp" ]
+      },
+      "MediaPurgeResponse" : {
+        "properties" : {
+          "requestedCount" : {
+            "example" : 2,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "acceptedCount" : {
+            "example" : 1,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "results" : {
+            "items" : {
+              "$ref" : "#/components/schemas/MediaPurgeItemResult"
+            },
+            "example" : [ {
+              "shortcode" : "Cabc123XYZ",
+              "status" : "ACCEPTED"
+            }, {
+              "shortcode" : "Cdef456UVW",
+              "status" : "NOT_DOWNLOADED"
+            } ],
+            "format" : null,
+            "type" : "array"
+          }
+        },
+        "example" : {
+          "requestedCount" : 2,
+          "acceptedCount" : 1,
+          "results" : [ {
+            "shortcode" : "Cabc123XYZ",
+            "status" : "ACCEPTED"
+          }, {
+            "shortcode" : "Cdef456UVW",
+            "status" : "NOT_DOWNLOADED"
+          } ]
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "acceptedCount", "requestedCount", "results" ]
+      },
+      "MediaPurgeItemResult" : {
+        "properties" : {
+          "shortcode" : {
+            "example" : "Cabc123XYZ",
+            "format" : null,
+            "type" : "string"
+          },
+          "status" : {
+            "example" : "ACCEPTED",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "shortcode" : "Cabc123XYZ",
+          "status" : "ACCEPTED"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "shortcode", "status" ]
+      },
+      "MediaPurgeRequest" : {
+        "properties" : {
+          "shortcodes" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cabc123XYZ", "Cdef456UVW" ],
+            "format" : null,
+            "type" : "array"
+          }
+        },
+        "example" : {
+          "shortcodes" : [ "Cabc123XYZ", "Cdef456UVW" ]
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "shortcodes" ]
+      },
+      "GalleryWriteRequest" : {
+        "properties" : {
+          "name" : {
+            "example" : "Travel 2024",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "name" : "Travel 2024"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "name" ]
+      },
+      "GalleryDeleteResponse" : {
+        "properties" : {
+          "name" : {
+            "example" : "Travel",
+            "format" : null,
+            "type" : "string"
+          },
+          "itemsRemoved" : {
+            "example" : 24,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "itemsReleased" : {
+            "example" : 7,
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "example" : {
+          "name" : "Travel",
+          "itemsRemoved" : 24,
+          "itemsReleased" : 7
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "itemsReleased", "itemsRemoved", "name" ]
+      },
+      "GalleryItemsResponse" : {
+        "properties" : {
+          "added" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cabc123XYZ" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "alreadyPresent" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cghi789RST" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "removed" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cdef456UVW" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "sortOrdersUpdated" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cabc123XYZ", "Cghi789RST" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "notFound" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cjkl012MNO" ],
+            "format" : null,
+            "type" : "array"
+          }
+        },
+        "example" : {
+          "added" : [ "Cabc123XYZ" ],
+          "alreadyPresent" : [ "Cghi789RST" ],
+          "removed" : [ "Cdef456UVW" ],
+          "sortOrdersUpdated" : [ "Cabc123XYZ", "Cghi789RST" ],
+          "notFound" : [ "Cjkl012MNO" ]
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "added", "alreadyPresent", "notFound", "removed", "sortOrdersUpdated" ]
+      },
+      "GalleryItemsRequest" : {
+        "properties" : {
+          "add" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cabc123XYZ" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "remove" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cdef456UVW" ],
+            "format" : null,
+            "type" : "array"
+          },
+          "sortOrders" : {
+            "example" : null,
+            "additionalProperties" : {
+              "properties" : {
+                "Cabc123XYZ" : {
+                  "example" : 0,
+                  "format" : "int64",
+                  "type" : [ "integer", "null" ]
+                }
+              },
+              "example" : {
+                "Cabc123XYZ" : 0
+              },
+              "format" : null,
+              "type" : "object",
+              "required" : null
+            },
+            "format" : null,
+            "type" : "object"
+          },
+          "clearSortOrders" : {
+            "items" : {
+              "format" : null,
+              "type" : "string"
+            },
+            "example" : [ "Cghi789RST" ],
+            "format" : null,
+            "type" : "array"
+          }
+        },
+        "example" : {
+          "add" : [ "Cabc123XYZ" ],
+          "remove" : [ "Cdef456UVW" ],
+          "sortOrders" : {
+            "Cabc123XYZ" : 0
+          },
+          "clearSortOrders" : [ "Cghi789RST" ]
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "add", "clearSortOrders", "remove", "sortOrders" ]
+      },
+      "ManagedAccountResponse" : {
+        "properties" : {
+          "instagramAccountId" : {
+            "example" : "17841400000000000",
+            "format" : null,
+            "type" : "string"
+          },
+          "enabled" : {
+            "example" : true,
+            "format" : null,
+            "type" : "boolean"
+          },
+          "readToken" : {
+            "example" : "example-read-token",
+            "format" : null,
+            "type" : "string"
+          },
+          "hasAdminToken" : {
+            "example" : true,
+            "format" : null,
+            "type" : "boolean"
+          },
+          "hasInstagramAccessToken" : {
+            "example" : true,
+            "format" : null,
+            "type" : "boolean"
+          },
+          "instagramTokenExpiresAt" : {
+            "example" : "2030-01-01T00:00:00Z",
+            "format" : null,
+            "type" : "string"
+          },
+          "storage" : {
+            "$ref" : "#/components/schemas/StorageResponse",
+            "example" : null,
+            "format" : null
+          },
+          "scheduleEnabled" : {
+            "example" : false,
+            "format" : null,
+            "type" : "boolean"
+          },
+          "intervalSeconds" : {
+            "example" : 900,
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "nextRunAt" : {
+            "example" : "2030-01-01T00:00:00Z",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "createdAt" : {
+            "example" : "2026-11-09T00:00:00Z",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "instagramAccountId" : "17841400000000000",
+          "enabled" : true,
+          "readToken" : "example-read-token",
+          "hasAdminToken" : true,
+          "hasInstagramAccessToken" : true,
+          "instagramTokenExpiresAt" : "2030-01-01T00:00:00Z",
+          "storage" : {
+            "bucketName" : "account-media",
+            "region" : "us-east-1",
+            "endpoint" : "https://s3.example.com",
+            "accessKeyId" : "example-access-key",
+            "pathStyleAccess" : false,
+            "hasSecretAccessKey" : true
+          },
+          "scheduleEnabled" : false,
+          "intervalSeconds" : 900,
+          "nextRunAt" : "2030-01-01T00:00:00Z",
+          "createdAt" : "2026-11-09T00:00:00Z"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "createdAt", "enabled", "hasAdminToken", "hasInstagramAccessToken", "instagramAccountId", "instagramTokenExpiresAt", "intervalSeconds", "readToken", "scheduleEnabled", "storage" ]
+      },
+      "StorageResponse" : {
+        "properties" : {
+          "bucketName" : {
+            "example" : "account-media",
+            "format" : null,
+            "type" : "string"
+          },
+          "region" : {
+            "example" : "us-east-1",
+            "format" : null,
+            "type" : "string"
+          },
+          "endpoint" : {
+            "example" : "https://s3.example.com",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "accessKeyId" : {
+            "example" : "example-access-key",
+            "format" : null,
+            "type" : "string"
+          },
+          "pathStyleAccess" : {
+            "example" : false,
+            "format" : null,
+            "type" : "boolean"
+          },
+          "hasSecretAccessKey" : {
+            "example" : true,
+            "format" : null,
+            "type" : "boolean"
+          }
+        },
+        "example" : {
+          "bucketName" : "account-media",
+          "region" : "us-east-1",
+          "endpoint" : "https://s3.example.com",
+          "accessKeyId" : "example-access-key",
+          "pathStyleAccess" : false,
+          "hasSecretAccessKey" : true
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "accessKeyId", "bucketName", "hasSecretAccessKey", "pathStyleAccess", "region" ]
+      },
+      "RegisterAccountRequest" : {
+        "properties" : {
+          "instagramAccountId" : {
+            "example" : "17841400000000000",
+            "format" : null,
+            "type" : "string"
+          },
+          "readToken" : {
+            "example" : "example-read-token",
+            "format" : null,
+            "type" : "string"
+          },
+          "adminToken" : {
+            "example" : "example-admin-token",
+            "format" : null,
+            "type" : "string"
+          },
+          "instagramAccessToken" : {
+            "example" : "example-instagram-token",
+            "format" : null,
+            "type" : "string"
+          },
+          "instagramTokenExpiresAt" : {
+            "example" : "2030-01-01T00:00:00Z",
+            "format" : null,
+            "type" : "string"
+          },
+          "storage" : {
+            "$ref" : "#/components/schemas/StorageRequest",
+            "example" : null,
+            "format" : null
+          }
+        },
+        "example" : {
+          "instagramAccountId" : "17841400000000000",
+          "readToken" : "example-read-token",
+          "adminToken" : "example-admin-token",
+          "instagramAccessToken" : "example-instagram-token",
+          "instagramTokenExpiresAt" : "2030-01-01T00:00:00Z",
+          "storage" : {
+            "bucketName" : "account-media",
+            "region" : "us-east-1",
+            "accessKeyId" : "example-access-key",
+            "secretAccessKey" : "example-secret-key",
+            "endpoint" : "https://s3.example.com",
+            "pathStyleAccess" : false
+          }
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "adminToken", "instagramAccessToken", "instagramAccountId", "instagramTokenExpiresAt", "readToken", "storage" ]
+      },
+      "StorageRequest" : {
+        "properties" : {
+          "bucketName" : {
+            "example" : "account-media",
+            "format" : null,
+            "type" : "string"
+          },
+          "region" : {
+            "example" : "us-east-1",
+            "format" : null,
+            "type" : "string"
+          },
+          "accessKeyId" : {
+            "example" : "example-access-key",
+            "format" : null,
+            "type" : "string"
+          },
+          "secretAccessKey" : {
+            "example" : "example-secret-key",
+            "format" : null,
+            "type" : "string"
+          },
+          "endpoint" : {
+            "example" : "https://s3.example.com",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "pathStyleAccess" : {
+            "example" : false,
+            "format" : null,
+            "type" : "boolean"
+          }
+        },
+        "example" : {
+          "bucketName" : "account-media",
+          "region" : "us-east-1",
+          "accessKeyId" : "example-access-key",
+          "secretAccessKey" : "example-secret-key",
+          "endpoint" : "https://s3.example.com",
+          "pathStyleAccess" : false
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "accessKeyId", "bucketName", "pathStyleAccess", "region", "secretAccessKey" ]
+      },
+      "ManagedAccountListResponse" : {
+        "properties" : {
+          "data" : {
+            "items" : {
+              "$ref" : "#/components/schemas/ManagedAccountResponse"
+            },
+            "example" : [ {
+              "instagramAccountId" : "17841400000000000",
+              "enabled" : true,
+              "readToken" : "example-read-token",
+              "hasAdminToken" : true,
+              "hasInstagramAccessToken" : true,
+              "instagramTokenExpiresAt" : "2030-01-01T00:00:00Z",
+              "storage" : {
+                "bucketName" : "account-media",
+                "region" : "us-east-1",
+                "endpoint" : "https://s3.example.com",
+                "accessKeyId" : "example-access-key",
+                "pathStyleAccess" : false,
+                "hasSecretAccessKey" : true
+              },
+              "scheduleEnabled" : false,
+              "intervalSeconds" : 900,
+              "nextRunAt" : "2030-01-01T00:00:00Z",
+              "createdAt" : "2026-11-09T00:00:00Z"
+            } ],
+            "format" : null,
+            "type" : "array"
+          },
+          "pagination" : {
+            "$ref" : "#/components/schemas/PaginationMeta",
+            "example" : null,
+            "format" : null
+          }
+        },
+        "example" : {
+          "data" : [ {
+            "instagramAccountId" : "17841400000000000",
+            "enabled" : true,
+            "readToken" : "example-read-token",
+            "hasAdminToken" : true,
+            "hasInstagramAccessToken" : true,
+            "instagramTokenExpiresAt" : "2030-01-01T00:00:00Z",
+            "storage" : {
+              "bucketName" : "account-media",
+              "region" : "us-east-1",
+              "endpoint" : "https://s3.example.com",
+              "accessKeyId" : "example-access-key",
+              "pathStyleAccess" : false,
+              "hasSecretAccessKey" : true
+            },
+            "scheduleEnabled" : false,
+            "intervalSeconds" : 900,
+            "nextRunAt" : "2030-01-01T00:00:00Z",
+            "createdAt" : "2026-11-09T00:00:00Z"
+          } ],
+          "pagination" : {
+            "totalRecords" : 100,
+            "currentPage" : 2,
+            "totalPages" : 10,
+            "links" : {
+              "first" : "/api/v1/management/accounts?page=1",
+              "prev" : "/api/v1/management/accounts?page=1",
+              "self" : "/api/v1/management/accounts?page=2",
+              "next" : "/api/v1/management/accounts?page=3",
+              "last" : "/api/v1/management/accounts?page=10"
+            }
+          }
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "data", "pagination" ]
+      },
+      "UpdateAccountRequest" : {
+        "properties" : {
+          "enabled" : {
+            "example" : true,
+            "format" : null,
+            "type" : [ "boolean", "null" ]
+          },
+          "readToken" : {
+            "example" : "replacement-read-token",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "adminToken" : {
+            "example" : "replacement-admin-token",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "instagramAccessToken" : {
+            "example" : "replacement-instagram-token",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "instagramTokenExpiresAt" : {
+            "example" : "2030-01-01T00:00:00Z",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "storage" : {
+            "$ref" : "#/components/schemas/StorageRequest",
+            "example" : null,
+            "format" : null
+          }
+        },
+        "example" : {
+          "enabled" : true,
+          "readToken" : "replacement-read-token",
+          "adminToken" : "replacement-admin-token",
+          "instagramAccessToken" : "replacement-instagram-token",
+          "instagramTokenExpiresAt" : "2030-01-01T00:00:00Z",
+          "storage" : {
+            "bucketName" : "account-media",
+            "region" : "us-east-1",
+            "accessKeyId" : "example-access-key",
+            "secretAccessKey" : "example-secret-key",
+            "endpoint" : "https://s3.example.com",
+            "pathStyleAccess" : false
+          }
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : null
+      },
+      "ScheduleResponse" : {
+        "properties" : {
+          "enabled" : {
+            "example" : true,
+            "format" : null,
+            "type" : "boolean"
+          },
+          "intervalSeconds" : {
+            "example" : 900,
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "nextRunAt" : {
+            "example" : "2030-01-01T00:00:00Z",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          }
+        },
+        "example" : {
+          "enabled" : true,
+          "intervalSeconds" : 900,
+          "nextRunAt" : "2030-01-01T00:00:00Z"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "enabled", "intervalSeconds" ]
+      },
+      "ScheduleRequest" : {
+        "properties" : {
+          "enabled" : {
+            "example" : true,
+            "format" : null,
+            "type" : "boolean"
+          },
+          "intervalSeconds" : {
+            "example" : 900,
+            "format" : "int64",
+            "type" : "integer"
+          }
+        },
+        "example" : {
+          "enabled" : true,
+          "intervalSeconds" : 900
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "enabled", "intervalSeconds" ]
+      },
+      "JobResponse" : {
+        "properties" : {
+          "id" : {
+            "example" : "019a0000-0000-7000-8000-000000000001",
+            "format" : null,
+            "type" : "string"
+          },
+          "instagramAccountId" : {
+            "example" : "17841400000000000",
+            "format" : null,
+            "type" : "string"
+          },
+          "source" : {
+            "example" : "MANUAL",
+            "format" : null,
+            "type" : "string"
+          },
+          "status" : {
+            "example" : "PARTIAL",
+            "format" : null,
+            "type" : "string"
+          },
+          "phase" : {
+            "example" : "PARTIAL",
+            "format" : null,
+            "type" : "string"
+          },
+          "createdAt" : {
+            "example" : "2026-11-09T00:00:00Z",
+            "format" : null,
+            "type" : "string"
+          },
+          "startedAt" : {
+            "example" : "2026-11-09T00:00:01Z",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "completedAt" : {
+            "example" : "2026-11-09T00:01:00Z",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "errorCode" : {
+            "example" : "ITEM_FAILURES",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "attempts" : {
+            "example" : 3,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "succeeded" : {
+            "example" : 2,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "skipped" : {
+            "example" : 0,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "failed" : {
+            "example" : 1,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "pending" : {
+            "example" : 0,
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "example" : {
+          "id" : "019a0000-0000-7000-8000-000000000001",
+          "instagramAccountId" : "17841400000000000",
+          "source" : "MANUAL",
+          "status" : "PARTIAL",
+          "phase" : "PARTIAL",
+          "createdAt" : "2026-11-09T00:00:00Z",
+          "startedAt" : "2026-11-09T00:00:01Z",
+          "completedAt" : "2026-11-09T00:01:00Z",
+          "errorCode" : "ITEM_FAILURES",
+          "attempts" : 3,
+          "succeeded" : 2,
+          "skipped" : 0,
+          "failed" : 1,
+          "pending" : 0
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "attempts", "createdAt", "failed", "id", "instagramAccountId", "pending", "phase", "skipped", "source", "status", "succeeded" ]
+      },
+      "JobListResponse" : {
+        "properties" : {
+          "data" : {
+            "items" : {
+              "$ref" : "#/components/schemas/JobResponse"
+            },
+            "example" : [ {
+              "id" : "019a0000-0000-7000-8000-000000000001",
+              "instagramAccountId" : "17841400000000000",
+              "source" : "MANUAL",
+              "status" : "PARTIAL",
+              "phase" : "PARTIAL",
+              "createdAt" : "2026-11-09T00:00:00Z",
+              "startedAt" : "2026-11-09T00:00:01Z",
+              "completedAt" : "2026-11-09T00:01:00Z",
+              "errorCode" : "ITEM_FAILURES",
+              "attempts" : 3,
+              "succeeded" : 2,
+              "skipped" : 0,
+              "failed" : 1,
+              "pending" : 0
+            } ],
+            "format" : null,
+            "type" : "array"
+          },
+          "pagination" : {
+            "$ref" : "#/components/schemas/PaginationMeta",
+            "example" : null,
+            "format" : null
+          }
+        },
+        "example" : {
+          "data" : [ {
+            "id" : "019a0000-0000-7000-8000-000000000001",
+            "instagramAccountId" : "17841400000000000",
+            "source" : "MANUAL",
+            "status" : "PARTIAL",
+            "phase" : "PARTIAL",
+            "createdAt" : "2026-11-09T00:00:00Z",
+            "startedAt" : "2026-11-09T00:00:01Z",
+            "completedAt" : "2026-11-09T00:01:00Z",
+            "errorCode" : "ITEM_FAILURES",
+            "attempts" : 3,
+            "succeeded" : 2,
+            "skipped" : 0,
+            "failed" : 1,
+            "pending" : 0
+          } ],
+          "pagination" : {
+            "totalRecords" : 100,
+            "currentPage" : 2,
+            "totalPages" : 10,
+            "links" : {
+              "first" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs?page=1",
+              "prev" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs?page=1",
+              "self" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs?page=2",
+              "next" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs?page=3",
+              "last" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs?page=10"
+            }
+          }
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "data", "pagination" ]
+      },
+      "JobDetailResponse" : {
+        "properties" : {
+          "job" : {
+            "$ref" : "#/components/schemas/JobResponse",
+            "example" : null,
+            "format" : null
+          },
+          "data" : {
+            "items" : {
+              "$ref" : "#/components/schemas/WorkResponse"
+            },
+            "example" : [ {
+              "phase" : "DOWNLOAD",
+              "itemId" : "example",
+              "status" : "FAILED",
+              "attempts" : 3,
+              "retryAt" : "2026-11-09T00:00:30Z",
+              "errorCode" : "MEDIA_NOT_READY"
+            } ],
+            "format" : null,
+            "type" : "array"
+          },
+          "pagination" : {
+            "$ref" : "#/components/schemas/PaginationMeta",
+            "example" : null,
+            "format" : null
+          }
+        },
+        "example" : {
+          "job" : {
+            "id" : "019a0000-0000-7000-8000-000000000001",
+            "instagramAccountId" : "17841400000000000",
+            "source" : "MANUAL",
+            "status" : "PARTIAL",
+            "phase" : "PARTIAL",
+            "createdAt" : "2026-11-09T00:00:00Z",
+            "startedAt" : "2026-11-09T00:00:01Z",
+            "completedAt" : "2026-11-09T00:01:00Z",
+            "errorCode" : "ITEM_FAILURES",
+            "attempts" : 3,
+            "succeeded" : 2,
+            "skipped" : 0,
+            "failed" : 1,
+            "pending" : 0
+          },
+          "data" : [ {
+            "phase" : "DOWNLOAD",
+            "itemId" : "example",
+            "status" : "FAILED",
+            "attempts" : 3,
+            "retryAt" : "2026-11-09T00:00:30Z",
+            "errorCode" : "MEDIA_NOT_READY"
+          } ],
+          "pagination" : {
+            "totalRecords" : 100,
+            "currentPage" : 2,
+            "totalPages" : 10,
+            "links" : {
+              "first" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=1",
+              "prev" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=1",
+              "self" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=2",
+              "next" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=3",
+              "last" : "/api/v1/admin/accounts/{accountId}/ingestion/jobs/{jobId}?page=10"
+            }
+          }
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "data", "job", "pagination" ]
+      },
+      "WorkResponse" : {
+        "properties" : {
+          "phase" : {
+            "example" : "DOWNLOAD",
+            "format" : null,
+            "type" : "string"
+          },
+          "itemId" : {
+            "example" : "example",
+            "format" : null,
+            "type" : "string"
+          },
+          "status" : {
+            "example" : "FAILED",
+            "format" : null,
+            "type" : "string"
+          },
+          "attempts" : {
+            "example" : 3,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "retryAt" : {
+            "example" : "2026-11-09T00:00:30Z",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          },
+          "errorCode" : {
+            "example" : "MEDIA_NOT_READY",
+            "format" : null,
+            "type" : [ "string", "null" ]
+          }
+        },
+        "example" : {
+          "phase" : "DOWNLOAD",
+          "itemId" : "example",
+          "status" : "FAILED",
+          "attempts" : 3,
+          "retryAt" : "2026-11-09T00:00:30Z",
+          "errorCode" : "MEDIA_NOT_READY"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "attempts", "itemId", "phase", "status" ]
+      },
+      "HealthResponse" : {
+        "properties" : {
+          "status" : {
+            "example" : "unavailable",
+            "format" : null,
+            "type" : "string"
+          }
+        },
+        "example" : {
+          "status" : "unavailable"
+        },
+        "format" : null,
+        "type" : "object",
+        "required" : [ "status" ]
+      }
+    },
+    "securitySchemes" : {
+      "accountReadBearer" : {
+        "scheme" : "bearer",
+        "type" : "http"
+      },
+      "accountAdminBearer" : {
+        "scheme" : "bearer",
+        "type" : "http"
+      },
+      "deploymentManagementBearer" : {
+        "scheme" : "bearer",
+        "type" : "http"
+      }
+    }
+  },
+  "openapi" : "3.2.0",
+  "jsonSchemaDialect" : "https://spec.openapis.org/oas/3.2/dialect/2025-09-17"
+}
