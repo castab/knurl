@@ -26,6 +26,10 @@ regexes = [
   '''pick-your-own-admin-secret''',    # README.md's application-instagram.conf example block
   '''dev-admin-token-not-secret''',    # retired local development configuration local.adminToken
   '''dev-read-token-not-secret''',     # retired local development configuration local.readToken
+  '''replace-with-account-admin-token''', # README.md's manual ingestion curl example placeholder
+  '''read-token-for-a''',              # DatabaseIntegrationTest fixture token (token-collision case)
+  '''rotated-admin-token''',           # DatabaseIntegrationTest fixture token (admin rotation case)
+  '''management-rotation''',           # DatabaseIntegrationTest fixture Instagram token (stale-refresh case)
 ]
 
 # Verified gap: gitleaks' bundled `generic-api-key` rule caps the secret length short enough
