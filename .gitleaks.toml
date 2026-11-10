@@ -18,17 +18,19 @@ useDefault = true
 # instead matches only the exact known-fake literal value, wherever it appears.
 description = "Fixed, checked-in, non-secret local-dev credentials and README documentation placeholders"
 regexes = [
-  '''knurl-dev-secret''',              # docker-compose.yml MinIO root password / application-local.conf S3 secret key
-  '''dev-token''',                     # presentation-service/config/application-local.conf apiBearerToken
+  '''knurl-local-management-token''', # documented local-only management credential
+  '''1111111111111111111111111111111111111111111111111111111111111111''', # local Garage secret only
+  '''knurl-dev-secret''',              # retired local-only S3 fixture
+  '''dev-token''',                     # retired local development configuration apiBearerToken
   '''your-long-lived-access-token''',  # README.md's application-instagram.conf example block
   '''pick-your-own-admin-secret''',    # README.md's application-instagram.conf example block
-  '''dev-admin-token-not-secret''',    # presentation-service/config/application-local.conf local.adminToken
-  '''dev-read-token-not-secret''',     # presentation-service/config/application-local.conf local.readToken
+  '''dev-admin-token-not-secret''',    # retired local development configuration local.adminToken
+  '''dev-read-token-not-secret''',     # retired local development configuration local.readToken
 ]
 
 # Verified gap: gitleaks' bundled `generic-api-key` rule caps the secret length short enough
 # that a real ~190-character Meta/Instagram long-lived access token (the exact shape of the
-# credential this audit found sitting in ingestion-service/config/application-instagram.conf)
+# credential this audit found sitting in retired local Instagram configuration)
 # silently does not match it - confirmed locally by testing the real value against the default
 # ruleset. This rule targets this repo's specific credential fields with no upper length bound
 # short of a sanity ceiling, so a long-lived token doesn't slip past the length cap that misses it.

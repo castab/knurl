@@ -20,3 +20,12 @@ Thumbs.db
 
 # Environment variables (use .env.local or pass via secrets)
 .env
+
+# Never send local credentials or development defaults to Docker builds.
+knurl-app/config/
+**/application-instagram.conf
+**/.env*
+
+*.local.json
+**/*.local.json
+dev/

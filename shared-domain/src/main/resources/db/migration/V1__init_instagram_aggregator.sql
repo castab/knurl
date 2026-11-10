@@ -1,49 +1,65 @@
--- Requires PostgreSQL 18+ for the native uuidv7() function used below.
-
--- 0. Multi-tenant Account Registry
--- `instagram_account_id` is the Graph API business account id - public, non-secret information,
--- safe to use as a URL path segment.
---
--- This table holds no credentials. It once carried `admin_token_hash`/`read_token_hash`, written by
--- whichever `ingestion-service` instance owned the account on every startup - which meant an
--- ingestion restart silently overwrote whatever a control plane had provisioned. Presentation
--- tokens now live only in `presentation-service`'s in-memory credential store, sourced per
--- CREDENTIALS_MODE from either its own environment (LOCAL) or a control plane (HTTP), so no
--- deployment has two writers racing over one column. What remains here is identity and work state:
--- the foreign-key anchor that instagram_posts/galleries reference, and the claim timestamps below.
---
--- last_synced_at/sync_claimed_at drive ingestion-service's account-agnostic feed-sync claim: any
--- worker, in any process, claims whichever account is due (last_synced_at NULL or stale) and not
--- currently claimed (sync_claimed_at NULL or stale) via `UPDATE ... FOR UPDATE SKIP LOCKED`, syncs
--- it with no transaction held across the actual work, then clears sync_claimed_at and stamps
--- last_synced_at on success. A crashed or failed attempt simply leaves sync_claimed_at set and
--- stale - the same claim query treats that as abandoned and retakes it once its lease elapses, so
--- there is no separate reaper process and no distinction between "failed" and "crashed".
+-- Fresh combined-application baseline. PostgreSQL 18+; reset old installations explicitly.
 CREATE TABLE instagram_accounts (
     instagram_account_id VARCHAR(100) PRIMARY KEY,
-    last_synced_at TIMESTAMP WITH TIME ZONE,
-    sync_claimed_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    read_token TEXT NOT NULL,
+    admin_token_encrypted TEXT NOT NULL,
+    instagram_access_token_encrypted TEXT NOT NULL,
+    instagram_token_expires_at TIMESTAMPTZ NOT NULL,
+    credential_version BIGINT NOT NULL DEFAULT 1,
+    s3_bucket_name TEXT NOT NULL,
+    s3_region TEXT NOT NULL,
+    s3_endpoint TEXT,
+    s3_access_key_id TEXT NOT NULL,
+    s3_secret_access_key_encrypted TEXT NOT NULL,
+    s3_path_style_access BOOLEAN NOT NULL DEFAULT FALSE,
+    storage_version BIGINT NOT NULL DEFAULT 1,
+    storage_used BOOLEAN NOT NULL DEFAULT FALSE,
+    last_orphan_sweep_at TIMESTAMPTZ,
+    schedule_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    interval_seconds BIGINT NOT NULL DEFAULT 900 CHECK (interval_seconds >= 300),
+    next_run_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
--- 1. System Credential Ledger (one row per account)
--- `access_token_encrypted` holds the Instagram access token AES-256-GCM-encrypted by
--- CredentialCipher (keyed by CREDENTIAL_ENCRYPTION_KEY, configured independently of the
--- database), not hashed like admin_token_hash above - ingestion-service must recover it in full
--- to replay it to Meta's Graph API on every sync cycle, which a one-way hash can't support.
---
--- instagram_account_id is intentionally NOT a foreign key into instagram_accounts: this table is
--- slated to move into its own database, owned by a future credentials broker service, isolated
--- from the catalog data instagram_accounts anchors. A same-database foreign key can't survive
--- that split, so it's never introduced here. Referential integrity for this relationship is the
--- consuming code's responsibility instead - see AuthConfigStore.delete and its doc comment. A
--- stray auth_config row for a deleted account is inert (nothing will ever request its token
--- again), so this is a deliberate, low-risk trade rather than a stopgap.
-CREATE TABLE auth_config (
-    instagram_account_id VARCHAR(100) PRIMARY KEY,
-    access_token_encrypted TEXT NOT NULL,
-    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+-- One namespace across both roles: a public read token cannot also be an admin token.
+CREATE TABLE account_token_fingerprints (
+    fingerprint TEXT PRIMARY KEY,
+    instagram_account_id VARCHAR(100) NOT NULL REFERENCES instagram_accounts ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('READ', 'ADMIN')),
+    UNIQUE (instagram_account_id, role)
+);
+CREATE TABLE ingestion_jobs (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    instagram_account_id VARCHAR(100) NOT NULL REFERENCES instagram_accounts,
+    source TEXT NOT NULL CHECK (source IN ('MANUAL', 'SCHEDULE')),
+    status TEXT NOT NULL DEFAULT 'QUEUED'
+        CHECK (status IN ('QUEUED','RUNNING','SUCCEEDED','PARTIAL','FAILED','CANCELLED')),
+    phase TEXT NOT NULL DEFAULT 'QUEUED',
+    cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    error_code TEXT
+);
+CREATE UNIQUE INDEX uq_active_account_job ON ingestion_jobs (instagram_account_id)
+    WHERE status IN ('QUEUED', 'RUNNING');
+CREATE INDEX idx_jobs_history ON ingestion_jobs (instagram_account_id, created_at DESC, id);
+CREATE TABLE ingestion_work (
+    job_id UUID NOT NULL REFERENCES ingestion_jobs ON DELETE CASCADE,
+    phase TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','RUNNING','SUCCEEDED','SKIPPED','FAILED')),
+    attempts INT NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 3),
+    retry_at TIMESTAMPTZ,
+    error_code TEXT,
+    object_keys TEXT[] NOT NULL DEFAULT '{}',
+    PRIMARY KEY (job_id, phase, item_id)
+);
+-- Durable completed-pagination snapshot. Never contains temporary CDN URLs or credentials.
+CREATE TABLE ingestion_feed_items (
+    job_id UUID NOT NULL REFERENCES ingestion_jobs ON DELETE CASCADE,
+    instagram_media_id VARCHAR(100) NOT NULL,
+    PRIMARY KEY (job_id, instagram_media_id)
 );
 
 -- 2. Master Media Assets Ledger
@@ -121,7 +137,7 @@ CREATE TABLE instagram_media_catalog (
     not_digestible_reason VARCHAR(50),
     -- NULL until a thumbnail has been fetched and stored (or the fetch hasn't succeeded yet -
     -- retried every sync cycle, no permanent-failure tracking). Holds the S3 object key, not a
-    -- full URL - presentation-service presigns it on read, same convention as
+    -- full URL - the HTTP layer presigns it on read, same convention as
     -- instagram_post_media's paths. Deliberate exception to "no S3 paths" above: one small
     -- thumbnail object per catalog row, fetched regardless of gallery membership, so an admin can browse
     -- real images before deciding what's worth a full download.
@@ -147,38 +163,6 @@ CREATE TABLE instagram_media_catalog (
     -- added back to any gallery.
     purge_requested_at TIMESTAMP WITH TIME ZONE,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- 3a. Pending Downloads Queue
--- Durable work queue for "this catalog item is selected into a gallery and has no downloaded
--- media yet" - the account-agnostic replacement for ingestion-service downloading inline during
--- its feed-sync pass. Carries identity only, no payload: Instagram's media_url/thumbnail_url are
--- short-lived CDN links that are never persisted anywhere in this schema, so a queued item's fresh
--- URLs are re-fetched from the Graph API at claim time, immediately before downloading, precisely
--- so an arbitrarily old backlog entry never causes a stale-URL failure.
---
--- status/claimed_at is the same claim-and-release, lease-based pattern as instagram_accounts'
--- sync_claimed_at above, made an explicit three-value status here because a download is a
--- one-shot job that reaches a genuine terminal state (COMPLETE), unlike an account, which cycles
--- back to due again. claimed_at is only meaningful while status = 'CLAIMED'; a failed attempt
--- leaves both status and claimed_at untouched, and the claim query below treats a CLAIMED row
--- whose claimed_at has passed the lease duration as abandoned and reclaims it - indistinguishably
--- whether the previous worker failed cleanly or crashed outright.
---
--- Composite (instagram_account_id, instagram_media_id) primary key rather than a surrogate id:
--- nothing else references this row by id, the natural key is already exactly what the enqueue-time
--- ON CONFLICT DO NOTHING dedup and the claim/complete statements need, and it keeps "mark complete
--- on success, leave alone on failure" a one-statement operation with no id indirection.
-CREATE TABLE pending_downloads (
-    instagram_account_id VARCHAR(100) NOT NULL REFERENCES instagram_accounts (instagram_account_id),
-    instagram_media_id VARCHAR(100) NOT NULL
-        REFERENCES instagram_media_catalog (instagram_media_id) ON DELETE CASCADE,
-    status VARCHAR(20) NOT NULL DEFAULT 'UNCLAIMED'
-        CHECK (status IN ('UNCLAIMED', 'CLAIMED', 'COMPLETE')),
-    enqueued_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    claimed_at TIMESTAMP WITH TIME ZONE,
-    completed_at TIMESTAMP WITH TIME ZONE,
-    PRIMARY KEY (instagram_account_id, instagram_media_id)
 );
 
 -- 3b. Galleries
@@ -215,6 +199,7 @@ CREATE TABLE gallery_items (
         REFERENCES instagram_media_catalog (instagram_media_id) ON DELETE CASCADE,
     view_count INT NOT NULL DEFAULT 0,
     click_count INT NOT NULL DEFAULT 0,
+    sort_order BIGINT CHECK (sort_order >= 0),
     added_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (gallery_id, instagram_media_id)
 );
@@ -284,14 +269,6 @@ CREATE INDEX idx_catalog_purge_requested ON instagram_media_catalog (purge_reque
 CREATE INDEX idx_catalog_account_timestamp ON instagram_media_catalog (instagram_account_id, timestamp DESC, instagram_media_id);
 CREATE INDEX idx_catalog_needs_thumbnail ON instagram_media_catalog (instagram_account_id) WHERE thumbnail_path IS NULL;
 
--- Serves the download claim's "unclaimed or stale-claimed, oldest first" scan without a full-table
--- sort; status is low-cardinality but still worth leading the index since the claim query always
--- filters on it first.
-CREATE INDEX idx_pending_downloads_claimable ON pending_downloads (status, enqueued_at);
 
--- Serves the completed-download cleanup sweep's "old COMPLETE rows" scan.
-CREATE INDEX idx_pending_downloads_completed_at ON pending_downloads (completed_at) WHERE status = 'COMPLETE';
-
--- Serves the feed-sync claim's "which accounts are due" scan, including NULL-first ordering for
--- never-synced accounts.
-CREATE INDEX idx_accounts_last_synced_at ON instagram_accounts (last_synced_at);
+CREATE INDEX idx_gallery_items_curated ON gallery_items (gallery_id, sort_order, instagram_media_id);
+CREATE INDEX idx_accounts_due ON instagram_accounts (next_run_at) WHERE enabled AND schedule_enabled;

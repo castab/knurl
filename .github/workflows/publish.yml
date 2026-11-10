@@ -1,4 +1,4 @@
-name: Publish Docker Images
+name: Publish Docker Image
 
 on:
   push:
@@ -57,20 +57,6 @@ jobs:
     needs: validate-release
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: presentation
-            dockerfile: ./presentation-service/Dockerfile
-            image: castab/knurl-presentation-service
-            title: Knurl presentation service
-            description: Knurl's internet-facing gallery presentation service.
-          - service: ingestion
-            dockerfile: ./ingestion-service/Dockerfile
-            image: castab/knurl-ingestion-service
-            title: Knurl ingestion service
-            description: Knurl's Instagram synchronization and media ingestion service.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -86,21 +72,21 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ matrix.image }}
+          images: castab/knurl
           tags: |
             type=semver,pattern={{version}},value=${{ needs.validate-release.outputs.tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ needs.validate-release.outputs.tag }}
             type=semver,pattern={{major}},value=${{ needs.validate-release.outputs.tag }}
             type=raw,value=latest
           labels: |
-            org.opencontainers.image.title=${{ matrix.title }}
-            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.title=Knurl
+            org.opencontainers.image.description=Multi-account Instagram galleries and scheduled ingestion.
             org.opencontainers.image.source=https://github.com/castab/knurl
 
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: ./Dockerfile
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
